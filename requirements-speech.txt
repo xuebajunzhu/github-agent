@@ -1,0 +1,6 @@
+# Optional offline voice dependencies (speech-to-text + text-to-speech).
+# Install with: pip install -r requirements.txt -r requirements-speech.txt
+# Then download models: python training/download_speech_models.py
+faster-whisper>=1.0
+sherpa-onnx>=1.10
+python-multipart>=0.0.9

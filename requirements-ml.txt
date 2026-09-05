@@ -1,0 +1,6 @@
+# Optional heavy dependencies: vector store, local embedding model, local LLM.
+# Install with: pip install -r requirements.txt -r requirements-ml.txt
+chromadb>=0.5
+sentence-transformers>=2.7
+transformers>=4.40
+torch>=2.2

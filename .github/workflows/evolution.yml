@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies (CPU torch)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt -r requirements-training.txt
+          pip install -r requirements.txt -r training/requirements-training.txt
       - name: Collect fresh training data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,130 @@
+telegram bot
+discord bot
+slack integration
+home assistant
+homebrew
+obs studio
+chrome extension
+firefox extension
+tampermonkey
+latex
+svg
+icon pack
+font
+wallpaper
+screenshot tool
+clipboard manager
+app launcher
+window manager
+dotfiles
+self-hosted
+media server
+rss reader
+knowledge base
+whiteboard
+diagram editor
+presentation
+ebook reader
+podcast
+emulator
+retro gaming
+minecraft
+chess engine
+machine translation
+speech synthesis
+voice assistant
+stable diffusion
+image generation
+object tracking
+face recognition
+time series
+anomaly detection
+graph neural network
+federated learning
+mlops
+model serving
+vector search
+knowledge graph
+sql parser
+query builder
+migration tool
+code generator
+low code
+no code
+form builder
+distributed systems
+consensus
+raft
+message queue
+event streaming
+kafka
+rpc framework
+serialization
+caching
+load balancer
+web server
+reverse proxy
+http client
+smtp
+payment
+billing
+accounting
+inventory
+pos system
+booking
+travel
+weather app
+news aggregator
+blog engine
+wiki
+forum software
+social network
+fitness
+health tracking
+meditation
+recipe
+shopping list
+budget tracker
+expense tracker
+invoice
+time tracking
+project management
+kanban
+issue tracker
+code review
+static site generator
+headless cms
+seo
+web performance
+accessibility
+css framework
+ui components
+design system
+animation
+game physics
+level editor
+voxel
+ray tracing
+operating system
+kernel
+container runtime
+virtualization
+file system
+backup
+file sync
+encryption tool
+password vault
+two factor authentication
+vpn client
+firewall
+osint
+malware analysis
+ctf
+bug bounty
+logo maker
+qr code
+barcode
+color picker
+emoji
+sticker
+meme generator

@@ -1,0 +1,125 @@
+[
+  {
+    "started_at": "2026-09-05T18:51:02.466121",
+    "finished_at": "2026-09-05T18:51:02.491928",
+    "outcome": "promoted",
+    "reason": "challenger promoted as version 20260905185102; archived 20260905185102",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": 0.5,
+    "challenger_f1": 0.9,
+    "gate_failures": [],
+    "reembedded": 5,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:02.511240",
+    "finished_at": "2026-09-05T18:51:02.516956",
+    "outcome": "discarded",
+    "reason": "challenger F1 0.1 did not beat champion 0.5",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": 0.5,
+    "challenger_f1": 0.1,
+    "gate_failures": [],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:02.530043",
+    "finished_at": "2026-09-05T18:51:02.534450",
+    "outcome": "discarded",
+    "reason": "challenger failed gates: ['use_cases F1']",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": null,
+    "challenger_f1": 0.99,
+    "gate_failures": [
+      "use_cases F1"
+    ],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:02.567075",
+    "finished_at": "2026-09-05T18:51:02.567075",
+    "outcome": "repaired",
+    "reason": "canary failed; rolled back to 20260905185102",
+    "data_size": 0,
+    "tags": 0,
+    "champion_f1": null,
+    "challenger_f1": null,
+    "gate_failures": [],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:48.587962",
+    "finished_at": "2026-09-05T18:51:48.605567",
+    "outcome": "promoted",
+    "reason": "challenger promoted as version 20260905185148; archived 20260905185148",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": 0.5,
+    "challenger_f1": 0.9,
+    "gate_failures": [],
+    "reembedded": 5,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:48.634816",
+    "finished_at": "2026-09-05T18:51:48.639802",
+    "outcome": "discarded",
+    "reason": "challenger F1 0.1 did not beat champion 0.5",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": 0.5,
+    "challenger_f1": 0.1,
+    "gate_failures": [],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:48.665671",
+    "finished_at": "2026-09-05T18:51:48.670653",
+    "outcome": "discarded",
+    "reason": "challenger failed gates: ['use_cases F1']",
+    "data_size": 30,
+    "tags": 6,
+    "champion_f1": null,
+    "challenger_f1": 0.99,
+    "gate_failures": [
+      "use_cases F1"
+    ],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:51:48.702298",
+    "finished_at": "2026-09-05T18:51:48.702298",
+    "outcome": "repaired",
+    "reason": "canary failed; rolled back to 20260905185148",
+    "data_size": 0,
+    "tags": 0,
+    "champion_f1": null,
+    "challenger_f1": null,
+    "gate_failures": [],
+    "reembedded": 0,
+    "errors": []
+  },
+  {
+    "started_at": "2026-09-05T18:52:48.491799",
+    "finished_at": "2026-09-05T18:52:52.113722",
+    "outcome": "failed",
+    "reason": "RuntimeError: training step failed: 1: C:\\Users\\cqk52\\AppData\\Local\\Programs\\Python\\Python312\\python.exe: can't open file 'D:\\\\项目\\\\github-agent\\\\app\\\\training\\\\train.py': [Errno 2] No such file or directory\n",
+    "data_size": 0,
+    "tags": 0,
+    "champion_f1": null,
+    "challenger_f1": null,
+    "gate_failures": [],
+    "reembedded": 0,
+    "errors": [
+      "RuntimeError: training step failed: 1: C:\\Users\\cqk52\\AppData\\Local\\Programs\\Python\\Python312\\python.exe: can't open file 'D:\\\\项目\\\\github-agent\\\\app\\\\training\\\\train.py': [Errno 2] No such file or directory\n"
+    ]
+  }
+]

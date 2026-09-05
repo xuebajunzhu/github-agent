@@ -41,6 +41,12 @@ def evolution_env(tmp_path, monkeypatch):
     """A live model dir (copied from the real one if present, else tiny) plus
     an EvolutionService whose subprocess training copies the live model and
     writes a challenger metrics file we control per-test."""
+    import app.services.evolution_service as evolution_module
+
+    # hermetic: module-level ROOT/HISTORY_FILE must never touch the real project
+    monkeypatch.setattr(evolution_module, "ROOT", tmp_path)
+    monkeypatch.setattr(evolution_module, "HISTORY_FILE", tmp_path / "evolution_history.json")
+
     settings = Settings(
         _env_file=None,
         trained_model_path=str(tmp_path / "repo-analyzer"),
@@ -140,8 +146,8 @@ def test_discards_gate_failures(evolution_env, monkeypatch):
 def test_rolls_back_when_live_model_broken(evolution_env, monkeypatch):
     service, tmp_path, monkeypatch = evolution_env
     live = Path(service._settings.trained_model_path)
-    # seed an archive that still works
-    archive = live.parent / "archive" / "oldgood"
+    # seed an archive that still works (inside the hermetic ROOT)
+    archive = tmp_path / "models" / "archive" / "oldgood"
     archive.mkdir(parents=True)
     (archive / "analyzer_config.json").write_text("{}", encoding="utf-8")
     # break the live model: canary stub reports failure for the live path only

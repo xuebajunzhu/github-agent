@@ -1,0 +1,56 @@
+name: Nightly Evolution (GitHub-hosted training)
+
+# Uses GitHub's compute to run one bounded self-evolution cycle per night:
+# collect fresh data -> train a challenger -> golden-gate it -> if it passes,
+# publish the model as a Release asset. The local deployment pulls releases
+# via scripts/pull_model_release.py (canary + gates still apply locally).
+
+on:
+  schedule:
+    - cron: "0 22 * * *" # 22:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies (CPU torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt -r requirements-training.txt
+      - name: Collect fresh training data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python training/collect_data.py \
+            --output training/data/raw_repos_ci.jsonl \
+            --min-stars 50 --per-page 100 --sleep 2
+      - name: Build dataset and train challenger
+        run: |
+          python training/prepare_data.py --raw training/data/raw_repos_ci.jsonl --max-samples 2500
+          python training/train.py --epochs 1 --model-dir models/staging-ci
+          python training/retune_thresholds.py --model-dir models/staging-ci
+      - name: Golden-set gate
+        env:
+          TRAINED_MODEL_PATH: models/staging-ci
+        run: python training/golden_eval.py
+      - name: Package model
+        if: success()
+        run: tar -czf model.tar.gz -C models staging-ci
+      - name: Publish model release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: model-${{ github.run_id }}
+          name: model-${{ github.run_id }}
+          body: "Challenger passed the golden gates on GitHub-hosted training."
+          files: model.tar.gz

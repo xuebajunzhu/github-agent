@@ -1,0 +1,100 @@
+name: Deploy public instance (GitHub-hosted)
+
+# Deploys a fully working instance of the agent ON a GitHub Actions runner,
+# exposes it to the public internet through a Cloudflare quick tunnel, and
+# runs remote integration tests against the public URL. The instance stays
+# live for keep-alive-minutes so humans can try it, then tears down (runners
+# are ephemeral; re-run the workflow to bring it back).
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep_alive_minutes:
+        description: "How long the public instance stays up"
+        default: "30"
+        required: false
+  schedule:
+    - cron: "0 21 * * *" # 1h before nightly evolution, to smoke-test deploys
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ADMIN_TOKEN: ${{ secrets.DEPLOY_ADMIN_TOKEN || 'deploy-admin-token' }}
+      SECRET_KEY: deploy-secret-key-not-for-production
+      ASR_PROVIDER: none
+      TTS_PROVIDER: none
+      RATE_LIMIT_PER_MINUTE: "600"
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies (CPU torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt -r training/requirements-training.txt
+
+      - name: Obtain gated model (latest release, else train one here)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release list --limit 10 --json tagName -q '.[].tagName' | grep '^model-' | head -1 || true)
+          if [ -n "$TAG" ]; then
+            echo "Downloading gated model release $TAG"
+            gh release download "$TAG" -p model.tar.gz -O model.tar.gz
+            mkdir -p models
+            tar -xzf model.tar.gz -C models
+            mv models/staging-ci models/repo-analyzer
+          else
+            echo "No model release yet - training a minimal gated challenger here"
+            python training/collect_data.py --output training/data/raw_repos_deploy.jsonl --min-stars 50 --sleep 2
+            python training/prepare_data.py --raw training/data/raw_repos_deploy.jsonl --max-samples 1500
+            python training/train.py --epochs 1 --model-dir models/repo-analyzer
+            python training/retune_thresholds.py --model-dir models/repo-analyzer
+            TRAINED_MODEL_PATH=models/repo-analyzer python training/golden_eval.py
+          fi
+
+      - name: Start agent
+        run: |
+          nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8788 > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8788/health && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8788/health
+
+      - name: Expose public tunnel
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --url http://localhost:8788 > tunnel.log 2>&1 &
+          for i in $(seq 1 30); do
+            URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            if [ -n "$URL" ]; then break; fi
+            sleep 2
+          done
+          echo "PUBLIC_URL=$URL" >> "$GITHUB_ENV"
+          echo "### 🌐 Public instance" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**$URL** (landing page: $URL/, voice page: $URL/api/voice/page)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Live for ${{ inputs.keep_alive_minutes || 30 }} minutes while this job runs." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remote integration tests (over the public tunnel)
+        run: |
+          python scripts/integration_test.py --base "$PUBLIC_URL" --admin-token "$ADMIN_TOKEN"
+
+      - name: Keep alive for humans
+        run: |
+          MINUTES=${{ inputs.keep_alive_minutes || 30 }}
+          echo "Instance stays public for $MINUTES more minutes..."
+          sleep $((MINUTES * 60))
+          curl -sf http://127.0.0.1:8788/health
+          echo "still healthy before teardown"

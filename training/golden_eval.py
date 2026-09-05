@@ -278,8 +278,10 @@ def main() -> None:
     }
     if args.fresh:
         report["fresh_domain"] = fresh_domain_check(analyzer, args.fresh)
-    REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\nreport written to {REPORT_PATH}")
+    report_path = Path(Settings(_env_file=None).trained_model_path) / "golden_eval_report.json"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"\nreport written to {report_path}")
     if failures:
         raise SystemExit(1)
 

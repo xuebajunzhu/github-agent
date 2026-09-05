@@ -1,0 +1,20 @@
+{
+  "tags": [
+    "deep-learning",
+    "topic0",
+    "topic1",
+    "topic2",
+    "topic3",
+    "topic4"
+  ],
+  "use_cases": [
+    "教育与学习",
+    "机器学习"
+  ],
+  "stats": {
+    "total": 30,
+    "train": 28,
+    "val": 1,
+    "test": 1
+  }
+}

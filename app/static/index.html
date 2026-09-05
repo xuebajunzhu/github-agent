@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Agent · 场景找开源项目</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 48px 16px;
+  }
+  h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
+  h1 span { color: #38bdf8; }
+  .subtitle { color: #94a3b8; font-size: 15px; margin-bottom: 28px; text-align: center; }
+  .searchbox { display: flex; gap: 10px; width: 100%; max-width: 680px; margin-bottom: 14px; }
+  input[type=text] {
+    flex: 1; padding: 14px 18px; font-size: 16px; border-radius: 10px;
+    border: 1px solid #334155; background: #0f172a; color: #e2e8f0; outline: none;
+  }
+  input[type=text]:focus { border-color: #38bdf8; }
+  button.go {
+    padding: 14px 26px; font-size: 16px; font-weight: 600; border-radius: 10px;
+    border: none; background: #38bdf8; color: #0f172a; cursor: pointer;
+  }
+  button.go:hover { background: #7dd3fc; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; justify-content: center; }
+  .chip {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8;
+    border-radius: 14px; padding: 4px 14px; font-size: 13px; cursor: pointer;
+  }
+  .chip:hover { color: #38bdf8; border-color: #38bdf8; }
+  .status { min-height: 24px; color: #94a3b8; margin-bottom: 18px; font-size: 14px; }
+  .card {
+    width: 100%; max-width: 720px;
+    background: rgba(30,41,59,.85); border: 1px solid #334155;
+    border-radius: 12px; padding: 16px 20px; margin-bottom: 14px;
+  }
+  .card .name { color: #38bdf8; font-weight: 600; font-size: 16px; }
+  .card .name a { color: inherit; text-decoration: none; }
+  .card .name a:hover { text-decoration: underline; }
+  .card .meta { float: right; color: #4ade80; font-size: 13px; }
+  .card .summary { color: #cbd5e1; font-size: 14px; margin: 8px 0; line-height: 1.55; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { background: #334155; color: #94a3b8; border-radius: 10px; font-size: 12px; padding: 2px 10px; }
+  .deps { color: #fbbf24; font-size: 12px; margin-top: 8px; }
+  .feedback { margin-top: 10px; font-size: 14px; }
+  .feedback button {
+    background: #0f172a; border: 1px solid #334155; color: #94a3b8;
+    border-radius: 8px; padding: 3px 14px; cursor: pointer; font-size: 14px; margin-right: 6px;
+  }
+  .feedback button:hover { border-color: #38bdf8; color: #38bdf8; }
+  .feedback .voted { color: #4ade80; font-size: 13px; }
+  footer { margin-top: 36px; color: #64748b; font-size: 13px; text-align: center; line-height: 1.8; }
+  footer a { color: #94a3b8; }
+  .error { color: #f87171; }
+</style>
+</head>
+<body>
+<h1>GitHub <span>Agent</span> · 说个场景，帮你找开源项目</h1>
+<div class="subtitle">定时检索 GitHub 热门仓库，本地训练的模型自动标注用途与场景，语义匹配你描述的需求</div>
+
+<div class="searchbox">
+  <input type="text" id="query" placeholder="例：我需要一个终端文件管理器 / deploy kubernetes apps / 爬虫框架" />
+  <button class="go" id="go">找项目</button>
+</div>
+<div class="chips">
+  <span class="chip">终端文件管理器</span>
+  <span class="chip">图像分类深度学习库</span>
+  <span class="chip">轻量级 web 框架</span>
+  <span class="chip">kubernetes 部署工具</span>
+  <span class="chip">PDF 转换工具</span>
+</div>
+<div class="status" id="status"></div>
+<div id="results"></div>
+
+<footer>
+  全部由本机离线模型驱动 · <a href="/docs">API 文档</a> · <a href="/api/voice/page">🎙️ 语音版</a> ·
+  点赞/点踩会直接用于改进推荐效果
+</footer>
+
+<script>
+const q = document.getElementById("query");
+const go = document.getElementById("go");
+const statusEl = document.getElementById("status");
+const resultsEl = document.getElementById("results");
+
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => { q.value = c.textContent; search(); }));
+go.addEventListener("click", search);
+q.addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+
+async function search() {
+  const query = q.value.trim();
+  if (!query) { statusEl.innerHTML = '<span class="error">先描述一下你的场景</span>'; return; }
+  statusEl.textContent = "语义检索中…";
+  resultsEl.innerHTML = "";
+  try {
+    const resp = await fetch("/api/recommend", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, top_k: 6 }),
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+    const data = await resp.json();
+    if (!data.results.length) {
+      statusEl.innerHTML = '没找到相关项目，换个说法试试（你的反馈已记录，会驱动改进）';
+      sendFeedback(query, null, "down", null);
+      return;
+    }
+    statusEl.textContent = `「${data.query}」为你找到 ${data.results.length} 个项目：`;
+    render(data.query, data.results);
+  } catch (err) {
+    statusEl.innerHTML = '<span class="error">' + escapeHtml(err.message) + "</span>";
+  }
+}
+
+function render(query, results) {
+  results.forEach(item => {
+    const p = item.project;
+    const div = document.createElement("div");
+    div.className = "card";
+    div.innerHTML =
+      '<div class="name"><a href="' + p.url + '" target="_blank">' + escapeHtml(p.full_name) + "</a>" +
+      '<span class="meta">★ ' + p.stars + " · 匹配 " + Math.round(item.score * 100) + "%</span></div>" +
+      '<div class="summary">' + escapeHtml(p.ai_summary || p.description || "") + "</div>" +
+      '<div class="tags">' + (p.ai_tags || []).slice(0, 6).map(t => '<span class="tag">' + escapeHtml(t) + "</span>").join("") + "</div>" +
+      '<div class="deps">' +
+        (item.dependencies && item.dependencies.length ? "可能涉及的依赖: " + escapeHtml(item.dependencies.join(", ")) : "") +
+        (p.ai_use_cases && p.ai_use_cases.length ? (item.dependencies && item.dependencies.length ? " · " : "") + "场景: " + escapeHtml(p.ai_use_cases.join(" / ")) : "") +
+      "</div>" +
+      '<div class="feedback">这个推荐对你有用吗？ ' +
+        '<button data-vote="up">👍 有用</button><button data-vote="down">👎 不相关</button>' +
+      "</div>";
+    div.querySelectorAll(".feedback button").forEach(btn =>
+      btn.addEventListener("click", () => {
+        sendFeedback(query, p.id, btn.dataset.vote, p.full_name, btn);
+      })
+    );
+    resultsEl.appendChild(div);
+  });
+}
+
+async function sendFeedback(query, projectId, vote, fullName, btn) {
+  try {
+    await fetch("/api/feedback", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query, vote,
+        project_id: projectId,
+        project_full_name: fullName,
+        source: "web",
+      }),
+    });
+    if (btn) {
+      btn.parentElement.innerHTML = '<span class="voted">已收到，谢谢！反馈会用于优化推荐</span>';
+    }
+  } catch (err) { /* feedback is best-effort */ }
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+</script>
+</body>
+</html>

@@ -39,6 +39,19 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     print(f"  [{mark}] {name} {detail}")
 
 
+def wait_until_reachable(base: str, attempts: int = 30, delay: float = 4.0) -> None:
+    """Fresh tunnel hostnames take a few seconds to propagate in DNS."""
+    for attempt in range(attempts):
+        try:
+            status, _ = call(base, "/health", timeout=15)
+            print(f"reachable after {attempt} retries (HTTP {status})")
+            return
+        except Exception as exc:  # noqa: BLE001
+            print(f"  waiting for the deployment ({attempt + 1}/{attempts}): {type(exc).__name__}")
+            time.sleep(delay)
+    raise SystemExit(f"deployment never became reachable: {base}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="Deployment base URL")
@@ -50,9 +63,10 @@ def main() -> None:
     admin_headers = {"X-Admin-Token": args.admin_token} if args.admin_token else {}
 
     print(f"Integration tests against: {base}")
+    wait_until_reachable(base)
 
     # 1. health
-    status, health = call(base, "/health")
+    status, health = call(base, "/health", timeout=15)
     check("health 200 + ok", status == 200 and health.get("status") == "ok", str(health.get("status")))
     check("trained analyzer active", health["components"]["llm_provider"] == "trained", health["components"]["llm_provider"])
     check("persistent vector store", "Chroma" in health["components"]["vector_store"], health["components"]["vector_store"])

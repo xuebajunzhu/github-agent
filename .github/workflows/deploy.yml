@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies (CPU torch)
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt -r training/requirements-training.txt
+          pip install -r requirements.txt -r training/requirements-training.txt chromadb
 
       - name: Obtain gated model (latest release, else train one here)
         env:

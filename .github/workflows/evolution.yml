@@ -49,24 +49,34 @@ jobs:
           python training/train.py --epochs 1 --model-dir models/staging-ci
           python training/retune_thresholds.py --model-dir models/staging-ci
 
-      - name: Golden-set gate
+      - name: Golden-set gate (a rejected challenger is a normal outcome)
         env:
           TRAINED_MODEL_PATH: models/staging-ci
+        continue-on-error: true
         run: python training/golden_eval.py
 
       - name: Store refreshed dataset back to repo releases
-        if: success()
+        if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload dataset training/data/raw_repos_all.jsonl --clobber \
             || gh release create dataset training/data/raw_repos_all.jsonl \
                  --title "accumulated training dataset" --notes "weak-labeled repo records"
+      - name: Read gate outcome
+        id: gate
+        run: |
+          PASSED=$(python -c "import json;print(json.load(open('models/staging-ci/golden_eval_report.json'))['gates_passed'])")
+          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+          if [ "$PASSED" != "True" ]; then
+            echo "Challenger rejected by golden gates - no release will be published (normal)."
+          fi
+
       - name: Package model
-        if: success()
+        if: steps.gate.outputs.passed == 'True'
         run: tar -czf model.tar.gz -C models staging-ci
       - name: Publish model release
-        if: success()
+        if: steps.gate.outputs.passed == 'True'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: model-${{ github.run_id }}

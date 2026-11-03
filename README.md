@@ -70,26 +70,37 @@ uvicorn app.main:app --reload
 
 ## 7x24 自主循环（待命 + 巡检）
 
-agent 内置全天候自主循环（已随部署启用），三种运行形态（可并存，共享同一数据库）：
+agent 内置全天候自主循环（已随部署启用），API 进程即调度进程（端口 8788）。**两平台各有一个统一控制面**，所有运维动作都走它：
 
 ```bash
-# 形态 A：API + 自主循环（uvicorn 进程内含调度器，部署采用此形态，端口 8788）
-scripts\start_api.bat          # 等价于 uvicorn app.main:app --host 0.0.0.0 --port 8788
+# Windows（PowerShell 控制面；*.bat 均为薄壳）
+scripts\manage.ps1 <status|start|stop|restart|ensure|verify|deploy|tunnel|preload|watchdog-register>
 
-# 形态 B：纯后台 worker（不开 HTTP）
-.venv\Scripts\python.exe -m app.worker
-
-# 形态 C：开机自启（注册计划任务，无需管理员）
-scripts\register_autostart.bat
+# Linux / macOS（bash 控制面；安装 systemd 用户单元后由 Restart=always 自愈）
+scripts/manage.sh <status|start|stop|restart|ensure|verify|deploy|preload>
 ```
 
-**全流程脚本**（Windows，均可在已有安装上重复执行）：
-
-| 脚本 | 作用 |
+| 动作 | 说明 |
 | --- | --- |
-| `scripts\setup_windows.bat` | 一键安装：venv → 依赖 → 生成带**随机密钥**的 `.env` → 建库 → 冒烟测试 |
-| `scripts\deploy_local.bat` | 就地更新：`git pull` → 同步依赖 → **测试门禁** → 重启服务（启动时自动做增量建列迁移） |
-| `scripts\restart_api.bat` | 杀掉 8788 旧进程并重启，等到 `/health` 恢复健康才返回 |
+| `status` | 进程/版本/provider/隧道 一目了然 |
+| `start` / `stop` / `restart` | 等到 `/health` 恢复才返回（失败自动打印日志尾部） |
+| `ensure` | **自愈**：不健康就拉起 + 隧道保活（Windows 看门狗每 5 分钟自动执行） |
+| `verify` | 四项冒烟：health / info / recommend / MCP initialize，任一失败退出码 1 |
+| `deploy` | pull → 依赖同步 → **pytest 门禁** → 重启 → verify |
+| `preload` | 预下载 BGE-M3 / Laya 权重（走 hf-mirror），消除首次请求的模型加载尖峰 |
+| `watchdog-register` | （Windows）注册每 5 分钟的 `ensure` 计划任务 |
+
+**安装**（两平台均可重复执行，密钥随机生成）：
+
+```bash
+# Windows
+scripts\setup_windows.bat        # 可选: scripts\manage.ps1 watchdog-register 常驻自愈
+# Linux / macOS
+scripts/setup_linux.sh --with-systemd   # 装 systemd 用户单元（Restart=always 自愈），
+                                        # 建议配合 sudo loginctl enable-linger $USER
+```
+
+Linux 的进程自愈由 systemd（`Restart=always`，单元模板见 `deploy/systemd/github-agent.service`）承担；Windows 由看门狗计划任务承担。隧道（cloudflared）在 Windows 上由 `ensure` 托管保活。
 
 循环内容：
 

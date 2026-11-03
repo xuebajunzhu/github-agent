@@ -1,0 +1,21 @@
+# systemd user unit for github-agent (installed by scripts/setup_linux.sh --with-systemd).
+# @ROOT@ is replaced with the install directory at install time.
+# Self-healing comes from Restart=always; enable linger so the unit survives
+# without an active login session:  sudo loginctl enable-linger <user>
+
+[Unit]
+Description=GitHub Agent API + 24/7 autonomous loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8788
+Environment=TRUST_PROXY_HEADERS=true
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

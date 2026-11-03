@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4o-mini"
     anthropic_api_key: Optional[str] = None
     anthropic_model: str = "claude-3-5-haiku-latest"
+    # DeepSeek (OpenAI-compatible endpoint; no embeddings API, so it is LLM-only)
+    deepseek_api_key: Optional[str] = None
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
     local_model_path: str = "microsoft/phi-2"
     trained_model_path: str = "./models/repo-analyzer"
     enable_llm_rerank: bool = False

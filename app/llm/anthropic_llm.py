@@ -10,6 +10,7 @@ from app.llm.base import (
     LLMAnalyzer,
     AnalysisError,
     AnalysisResult,
+    RERANK_SYSTEM_PROMPT,
     SYSTEM_PROMPT,
     build_analysis_prompt,
     build_rerank_prompt,

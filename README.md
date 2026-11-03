@@ -9,7 +9,7 @@
 ## 核心特性
 
 - **定时检索**：APScheduler 周期性按关键词 + 星标数搜索 GitHub 仓库，并刷新已入库项目。
-- **AI 分析**：自动生成 `summary` / `use_cases` / `tags` / `dependencies`，支持五级 provider：**本地训练模型（默认，零成本）** → OpenAI/Anthropic → 本地小模型 → 规则兜底（永不失败）。
+- **AI 分析**：自动生成 `summary` / `use_cases` / `tags` / `dependencies`，支持多级 provider：**DeepSeek（推荐，配置 `DEEPSEEK_API_KEY` 即用）** / 本地训练模型（零成本）→ OpenAI/Anthropic → 本地小模型 → 规则兜底（永不失败）。
 - **自训练模型**：`training/` 内置完整训练流水线（采集 → 弱监督标注 → CPU 训练 → 评估），在 Windows 上约 1 小时训出专属的仓库分析模型，详见 [training/README.md](training/README.md)。模型质量由**独立手工评测集**把关（107 个名仓库手标 + 对抗用例 + 结构检查）；本地跑 `pytest` 时对已训练模型执行金标准回归门禁（CI 环境无 torch/模型时自动跳过，云端门禁见 evolution 工作流）。
 - **语音交互（全离线）**：说话描述场景 → 离线语音识别（faster-whisper）→ 语义推荐 → 离线语音播报（sherpa-onnx + Melo-TTS 中英混读）。内置网页 `GET /api/voice/page`，麦克风一键交互。
 - **向量化存储**：自训练模型的 encoder 直接做语义检索（中英文查询）；也可切换 sentence-transformers / OpenAI / 哈希 TF-IDF 兜底。
@@ -231,9 +231,10 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `GITHUB_TOKEN` | 空 | 服务端检索用 token，显著提高限额 |
 | `GITHUB_SEARCH_KEYWORDS` | JSON 数组 | 定时检索的关键词列表 |
 | `GITHUB_MIN_STARS` | 100 | 最低星标过滤 |
-| `LLM_PROVIDER` | `openai` | `trained`（本地自训练模型，推荐）/ `openai` / `anthropic` / `local` / `rule` |
+| `LLM_PROVIDER` | `openai` | `deepseek`（性价比推荐）/ `trained`（零成本离线）/ `openai` / `anthropic` / `local` / `rule` |
+| `DEEPSEEK_API_KEY` | 空 | DeepSeek API 密钥；`LLM_PROVIDER=deepseek` 时必填（`DEEPSEEK_MODEL` 默认 `deepseek-v4-flash`） |
 | `TRAINED_MODEL_PATH` | `./models/repo-analyzer` | 自训练模型目录（存在即自动启用） |
-| `LLM_FALLBACK_PROVIDERS` | `["trained","local","rule"]` | 主模型失败后的降级顺序（代码默认；`.env.example` 推荐配置为 `["rule"]`） |
+| `LLM_FALLBACK_PROVIDERS` | `["trained","local","rule"]` | 主模型失败后的降级顺序（代码默认；`.env.example` 推荐配置为 `["trained","rule"]`） |
 | `EMBEDDER_PROVIDER` | `sentence_transformers` | `trained`（自训练 encoder，推荐）/ `sentence_transformers` / `openai` / `tfidf` |
 | `ASR_PROVIDER` / `TTS_PROVIDER` | `faster_whisper` / `sherpa_onnx` | 语音识别/合成，`none` 禁用；模型见 `training/download_speech_models.py` |
 | `VECTOR_STORE_BACKEND` | `chroma` | `chroma` / `memory` |
@@ -247,7 +248,7 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 
 | 环节 | 首选 | 降级 1 | 降级 2（兜底） |
 | --- | --- | --- | --- |
-| LLM 分析 | 代码默认 OpenAI / Anthropic（`.env.example` 推荐 `trained`，离线零成本） | trained → local 依次补位 | 规则分析器（关键词映射，永不失败） |
+| LLM 分析 | 代码默认 OpenAI / Anthropic（`.env.example` 推荐 `deepseek`，其次 `trained` 离线零成本） | trained → local 依次补位 | 规则分析器（关键词映射，永不失败） |
 | 向量化 | 自训练 encoder / sentence-transformers（本地） | OpenAI Embedding | 纯 Python 哈希 TF-IDF（零依赖） |
 | 语音识别/合成 | faster-whisper small / Melo-TTS（离线，CPU） | — | 接口返回 503 并提示（文本接口不受影响） |
 | 向量库 | Chroma（持久化） | — | 内存向量库（重启丢失，需重建索引） |

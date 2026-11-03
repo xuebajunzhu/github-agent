@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     )
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dimension: int = 384
+    # BGE-M3 (EMBEDDER_PROVIDER=bge-m3): 1024-dim multilingual dense embeddings
+    bge_m3_model_name: str = "BAAI/bge-m3"
+    bge_m3_max_len: int = 1024
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_api_key: Optional[str] = None
 

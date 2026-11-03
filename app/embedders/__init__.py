@@ -10,6 +10,7 @@ from app.embedders.tfidf_embedder import HashingTfidfEmbedder
 __all__ = [
     "Embedder",
     "SentenceTransformerEmbedder",
+    "BgeM3Embedder",
     "OpenAIEmbedder",
     "HashingTfidfEmbedder",
     "TrainedEmbedder",
@@ -21,6 +22,10 @@ def create_embedder(name: str, settings: Settings) -> Embedder:
     """Instantiate an embedder by provider name; raises on invalid name/config."""
     if name == "sentence_transformers":
         return SentenceTransformerEmbedder(settings.embedding_model_name)
+    if name == "bge-m3":
+        from app.embedders.bge_m3_embedder import BgeM3Embedder
+
+        return BgeM3Embedder(settings)
     if name == "openai":
         return OpenAIEmbedder(settings)
     if name == "tfidf":

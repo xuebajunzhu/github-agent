@@ -12,7 +12,7 @@
 - **AI 分析**：自动生成 `summary` / `use_cases` / `tags` / `dependencies`，支持多级 provider：**DeepSeek（推荐，配置 `DEEPSEEK_API_KEY` 即用）** / 本地训练模型（零成本）→ OpenAI/Anthropic → 本地小模型 → 规则兜底（永不失败）。
 - **自训练模型**：`training/` 内置完整训练流水线（采集 → 弱监督标注 → CPU 训练 → 评估），在 Windows 上约 1 小时训出专属的仓库分析模型，详见 [training/README.md](training/README.md)。模型质量由**独立手工评测集**把关（107 个名仓库手标 + 对抗用例 + 结构检查）；本地跑 `pytest` 时对已训练模型执行金标准回归门禁（CI 环境无 torch/模型时自动跳过，云端门禁见 evolution 工作流）。
 - **语音交互（全离线）**：说话描述场景 → 离线语音识别（faster-whisper）→ 语义推荐 → 离线语音播报（sherpa-onnx + Melo-TTS 中英混读）。内置网页 `GET /api/voice/page`，麦克风一键交互。
-- **向量化存储**：自训练模型的 encoder 直接做语义检索（中英文查询）；也可切换 sentence-transformers / OpenAI / 哈希 TF-IDF 兜底。
+- **向量化存储**：**BGE-M3**（BAAI 多语言嵌入模型，1024 维，中文语义检索质量最佳）做语义检索；也可切换自训练 encoder / sentence-transformers / OpenAI / 哈希 TF-IDF 兜底。切换嵌入模型时向量空间指纹校验自动清库重建。
 - **场景推荐**：`POST /api/recommend` 输入自然语言场景，返回语义最相似的项目、匹配分数与可能涉及的依赖，可选 LLM 重排并生成推荐理由；长期未维护的仓库在排序中轻度降权（`maintenance` 字段标注 active/quiet/stale）。
 - **MCP Server**：`POST /mcp` 实现 Model Context Protocol 的 tools 能力（Streamable HTTP / JSON-RPC），暴露 `recommend_scenario`、`list_projects`、`get_project` 三个工具，供 AI agent 实时查询已验证的开源项目索引；可选 `MCP_AUTH_TOKEN` Bearer 认证。
 - **GitHub OAuth**：authlib 实现登录，用户 access token 加密（Fernet）入库并签发 JWT。（注意：登录 token 提升检索限额、JWT 保护资源目前**尚未接线**，属于后续演进项。）
@@ -235,7 +235,8 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `DEEPSEEK_API_KEY` | 空 | DeepSeek API 密钥；`LLM_PROVIDER=deepseek` 时必填（`DEEPSEEK_MODEL` 默认 `deepseek-v4-flash`） |
 | `TRAINED_MODEL_PATH` | `./models/repo-analyzer` | 自训练模型目录（存在即自动启用） |
 | `LLM_FALLBACK_PROVIDERS` | `["trained","local","rule"]` | 主模型失败后的降级顺序（代码默认；`.env.example` 推荐配置为 `["trained","rule"]`） |
-| `EMBEDDER_PROVIDER` | `sentence_transformers` | `trained`（自训练 encoder，推荐）/ `sentence_transformers` / `openai` / `tfidf` |
+| `EMBEDDER_PROVIDER` | `sentence_transformers` | `bge-m3`（BAAI 多语言模型，1024 维，中文检索最佳，推荐）/ `trained`（自训练 encoder，零成本）/ `sentence_transformers` / `openai` / `tfidf` |
+| `BGE_M3_MODEL_NAME` | `BAAI/bge-m3` | BGE-M3 模型名；首次使用自动下载 ~2.3GB（尊重 `HF_ENDPOINT` 镜像），换嵌入模型会自动清库并重建索引（`scripts/reindex_vectors.py` 可一次性重建） |
 | `ASR_PROVIDER` / `TTS_PROVIDER` | `faster_whisper` / `sherpa_onnx` | 语音识别/合成，`none` 禁用；模型见 `training/download_speech_models.py` |
 | `VECTOR_STORE_BACKEND` | `chroma` | `chroma` / `memory` |
 | `SCHEDULER_ENABLED` | `true` | 设为 `false` 可禁用定时任务（如仅做 API 服务） |

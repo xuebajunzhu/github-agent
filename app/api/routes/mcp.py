@@ -124,6 +124,16 @@ def _tool_get_project(services, arguments: dict) -> dict:
     return {"found": True, **_project_brief(project)}
 
 
+def _tool_research_problem(services, arguments: dict) -> dict:
+    problem = str(arguments.get("problem") or "").strip()
+    if not problem:
+        raise MCPError(JSONRPC_INVALID_REQUEST, "problem is required")
+    include_alternatives = bool(arguments.get("include_alternatives", True))
+    result = services.research.research(problem, include_alternatives)
+    result["data_source"] = "live-github-index"
+    return result
+
+
 def _tool_schema(properties: dict, required: list[str]) -> dict:
     return {"type": "object", "properties": properties, "required": required}
 
@@ -143,6 +153,25 @@ TOOLS: list[dict[str, Any]] = [
                 "top_k": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
             },
             ["query"],
+        ),
+    },
+    {
+        "name": "research_problem",
+        "description": (
+            "Deep research for a stated problem: returns BOTH directly usable "
+            "open-source projects AND projects with similar/substitutable "
+            "functionality (different approach or form factor), searched live "
+            "across GitHub and the local verified index, each with a short "
+            "Chinese justification. Slower than recommend_scenario (LLM "
+            "planning + classification); use for dependency research, "
+            "build-vs-adopt decisions, and landscape surveys."
+        ),
+        "inputSchema": _tool_schema(
+            {
+                "problem": {"type": "string", "description": "The problem/need, any language"},
+                "include_alternatives": {"type": "boolean", "default": True},
+            },
+            ["problem"],
         ),
     },
     {
@@ -169,6 +198,7 @@ TOOLS: list[dict[str, Any]] = [
 
 TOOL_HANDLERS = {
     "recommend_scenario": _tool_recommend_scenario,
+    "research_problem": _tool_research_problem,
     "list_projects": _tool_list_projects,
     "get_project": _tool_get_project,
 }

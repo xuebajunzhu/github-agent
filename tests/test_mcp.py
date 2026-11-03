@@ -41,9 +41,33 @@ def test_ping_and_unknown_method(client):
 def test_tools_listed(client):
     tools = client.post("/mcp", json=_rpc("tools/list")).json()["result"]["tools"]
     names = {tool["name"] for tool in tools}
-    assert names == {"recommend_scenario", "list_projects", "get_project"}
+    assert names == {"recommend_scenario", "research_problem", "list_projects", "get_project"}
     for tool in tools:
         assert tool["inputSchema"]["type"] == "object"
+
+
+def test_research_problem_tool_is_wired(client, monkeypatch):
+    def fake_research(problem, include_alternatives=True):
+        assert include_alternatives is True
+        return {
+            "problem": problem,
+            "domain": "testing",
+            "keywords": ["test kit"],
+            "direct": [{"full_name": "acme/testkit", "category": "direct", "reason": "r"}],
+            "alternatives": [],
+            "summary": "s",
+            "cached": False,
+        }
+
+    monkeypatch.setattr(client.app.state.services.research, "research", fake_research)
+    response = client.post(
+        "/mcp",
+        json=_rpc("tools/call", params={"name": "research_problem", "arguments": {"problem": "testing tools"}}),
+    )
+    assert response.status_code == 200
+    payload = response.json()["result"]["structuredContent"]
+    assert payload["data_source"] == "live-github-index"
+    assert payload["direct"][0]["full_name"] == "acme/testkit"
 
 
 def test_recommend_scenario_tool(client):

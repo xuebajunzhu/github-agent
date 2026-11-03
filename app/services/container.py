@@ -16,6 +16,7 @@ from app.services.github_service import GitHubService
 from app.services.ingest_service import IngestService
 from app.services.patrol_service import PatrolService
 from app.services.recommend_service import RecommendService
+from app.services.research_service import ResearchService
 from app.speech import SpeechToText, TextToSpeech, build_stt, build_tts
 from app.utils.crypto import TokenCipher
 from app.vectorstore.base import VectorStore
@@ -36,6 +37,7 @@ class ServiceContainer:
     patrol: PatrolService
     evolution: EvolutionService
     digest: DigestService
+    research: ResearchService
     stt: SpeechToText | None = None
     tts: TextToSpeech | None = None
 
@@ -73,6 +75,9 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
         patrol=patrol,
         evolution=evolution,
         digest=DigestService(settings, session_factory),
+        research=ResearchService(
+            settings, session_factory, github, analysis, embedding, vectors
+        ),
         stt=build_stt(settings),
         tts=build_tts(settings),
     )

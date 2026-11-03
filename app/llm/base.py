@@ -32,6 +32,12 @@ class LLMAnalyzer(ABC):
         """Whether this backend can currently be used (dependency + config checks)."""
         return True
 
+    def chat(self, system: str, user: str) -> str:
+        """Free-form chat for general LLM tasks beyond repo analysis
+        (research planning, classification). Generative backends override
+        this; raise NotImplementedError otherwise."""
+        raise NotImplementedError(f"'{self.name}' does not support free-form chat")
+
     def rank_candidates(
         self, query: str, candidates: list[dict]
     ) -> tuple[list[int], str] | None:

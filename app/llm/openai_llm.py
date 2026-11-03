@@ -84,6 +84,9 @@ class OpenAIAnalyzer(LLMAnalyzer):
         content = self._chat(SYSTEM_PROMPT, build_analysis_prompt(project_data))
         return result_from_json(extract_json(content), self.name)
 
+    def chat(self, system: str, user: str) -> str:
+        return self._chat(system, user)
+
     def rank_candidates(self, query: str, candidates: list[dict]) -> tuple[list[int], str] | None:
         try:
             content = self._chat(RERANK_SYSTEM_PROMPT, build_rerank_prompt(query, candidates))

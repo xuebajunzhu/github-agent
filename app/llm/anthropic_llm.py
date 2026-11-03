@@ -67,6 +67,9 @@ class AnthropicAnalyzer(LLMAnalyzer):
                     time.sleep(min(2**attempt, 8))
         raise AnalysisError(f"Anthropic call failed after retries: {last_error}")
 
+    def chat(self, system: str, user: str) -> str:
+        return self._chat(system, user)
+
     def analyze(self, project_data: dict) -> AnalysisResult:
         content = self._chat(SYSTEM_PROMPT, build_analysis_prompt(project_data))
         return result_from_json(extract_json(content), self.name)

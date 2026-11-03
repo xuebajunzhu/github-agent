@@ -20,6 +20,22 @@ class AnalysisService:
                 return analyzer.name
         return "none"
 
+    def chat(self, system: str, user: str) -> str:
+        """Free-form LLM chat walking the fallback chain; for general tasks
+        (research planning, classification) rather than repo analysis."""
+        last_error: Exception | None = None
+        for analyzer in self.analyzers:
+            if not analyzer.available():
+                continue
+            try:
+                return analyzer.chat(system, user)
+            except NotImplementedError:
+                continue  # analysis-only backends (trained / rule)
+            except AnalysisError as exc:
+                last_error = exc
+                logger.warning(f"Chat failed with '{analyzer.name}': {exc}")
+        raise AnalysisError(f"No available LLM backend for chat: {last_error}")
+
     def analyze(self, project_data: dict) -> AnalysisResult:
         """Try analyzers in priority order; degrade on any failure."""
         available = [analyzer for analyzer in self.analyzers if analyzer.available()]

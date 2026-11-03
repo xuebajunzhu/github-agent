@@ -133,6 +133,13 @@ class Settings(BaseSettings):
     patrol_reconcile_limit: int = 2000
     # query_history only grows; patrol prunes rows older than this many days.
     query_history_retention_days: int = 180
+
+    # Problem research (POST /api/research): problem -> direct solutions +
+    # similar/substitutable projects. Costs several LLM calls + GitHub quota.
+    research_max_candidates: int = 40
+    research_cache_hours: int = 24
+    research_min_stars: int = 30
+    research_keywords: int = 4
     # Parallel analysis threads (analysis is CPU/IO mixed; 1-4 sensible).
     analysis_workers: int = 2
 

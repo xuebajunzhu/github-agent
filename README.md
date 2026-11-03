@@ -14,7 +14,7 @@
 - **语音交互（全离线）**：说话描述场景 → 离线语音识别（faster-whisper）→ 语义推荐 → 离线语音播报（sherpa-onnx + Melo-TTS 中英混读）。内置网页 `GET /api/voice/page`，麦克风一键交互。
 - **向量化存储**：**BGE-M3**（BAAI 多语言嵌入模型，1024 维，中文语义检索质量最佳）做语义检索；也可切换自训练 encoder / sentence-transformers / OpenAI / 哈希 TF-IDF 兜底。切换嵌入模型时向量空间指纹校验自动清库重建。
 - **场景推荐**：`POST /api/recommend` 输入自然语言场景，返回语义最相似的项目、匹配分数与可能涉及的依赖，可选 LLM 重排并生成推荐理由；长期未维护的仓库在排序中轻度降权（`maintenance` 字段标注 active/quiet/stale）。
-- **MCP Server**：`POST /mcp` 实现 Model Context Protocol 的 tools 能力（Streamable HTTP / JSON-RPC），暴露 `recommend_scenario`、`list_projects`、`get_project` 三个工具，供 AI agent 实时查询已验证的开源项目索引；可选 `MCP_AUTH_TOKEN` Bearer 认证。
+- **MCP Server**：`POST /mcp` 实现 Model Context Protocol 的 tools 能力（Streamable HTTP / JSON-RPC），暴露 `recommend_scenario`（场景推荐）、`research_problem`（问题研究：直接方案+替代方案）、`list_projects`、`get_project` 四个工具，供 AI agent 实时查询已验证的开源项目索引；可选 `MCP_AUTH_TOKEN` Bearer 认证。
 - **GitHub OAuth**：authlib 实现登录，用户 access token 加密（Fernet）入库并签发 JWT。（注意：登录 token 提升检索限额、JWT 保护资源目前**尚未接线**，属于后续演进项。）
 - **全链路降级**：任何外部依赖（LLM API、embedding 模型、语音模型、Chroma、GitHub API）不可用时都有兜底路径，服务照常启动。
 
@@ -199,6 +199,7 @@ docker compose up --build  # PostgreSQL + 应用 + Chroma 持久化卷
 | GET | `/auth/github/login` | 跳转 GitHub OAuth 授权页 |
 | GET | `/auth/github/callback` | OAuth 回调，换取并加密存储 token，签发 JWT |
 | POST | `/api/recommend` | 场景推荐，body: `{"query": "...", "top_k": 5}` |
+| POST | `/api/research` | **问题研究**：`{"problem": "..."}` → 直接可用方案 + 类似可替代方案（本地索引 + GitHub 全量搜索，DeepSeek 规划/分类/综述，24h 缓存） |
 | GET | `/api/projects/{id}` | 项目详情 |
 | GET | `/api/projects?limit=&offset=&language=` | 项目列表 |
 | POST | `/api/admin/trigger-fetch` | 手动触发一次检索（Header: `X-Admin-Token`） |

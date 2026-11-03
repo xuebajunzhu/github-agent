@@ -17,7 +17,7 @@ from app.services.container import build_services
 from app.services.scheduler import SchedulerService
 from app.utils.logging import configure_logging, logger
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 LANDING_PAGE = Path(__file__).resolve().parent / "static" / "index.html"
 
 

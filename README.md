@@ -74,14 +74,22 @@ agent 内置全天候自主循环（已随部署启用），三种运行形态�
 
 ```bash
 # 形态 A：API + 自主循环（uvicorn 进程内含调度器，部署采用此形态，端口 8788）
-uvicorn app.main:app --host 0.0.0.0 --port 8788
+scripts\start_api.bat          # 等价于 uvicorn app.main:app --host 0.0.0.0 --port 8788
 
 # 形态 B：纯后台 worker（不开 HTTP）
 .venv\Scripts\python.exe -m app.worker
 
-# 形态 C：开机自启（无需管理员，脚本已装入当前用户「启动」文件夹）
-copy scripts\start_api.bat "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\GitHubAgentAPI.bat"
+# 形态 C：开机自启（注册计划任务，无需管理员）
+scripts\register_autostart.bat
 ```
+
+**全流程脚本**（Windows，均可在已有安装上重复执行）：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `scripts\setup_windows.bat` | 一键安装：venv → 依赖 → 生成带**随机密钥**的 `.env` → 建库 → 冒烟测试 |
+| `scripts\deploy_local.bat` | 就地更新：`git pull` → 同步依赖 → **测试门禁** → 重启服务（启动时自动做增量建列迁移） |
+| `scripts\restart_api.bat` | 杀掉 8788 旧进程并重启，等到 `/health` 恢复健康才返回 |
 
 循环内容：
 
@@ -159,16 +167,20 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" http://127.0.0.1:8788/api/admin/feedback
 
 仓库：https://github.com/xuebajunzhu/github-agent （main 分支）
 
-- **版本管理**：git 管理，`.gitignore` 锚定根目录排除 `.env`/`models/`/数据/日志/临时工具；
+- **版本管理**：git 管理 + [CHANGELOG.md](CHANGELOG.md)；版本号单一来源 `app/main.py::VERSION`；
+- **发布**：打 tag（`git tag -a v0.2.0 -m "..." && git push origin v0.2.0`）→
+  `release.yml` 自动跑测试门禁 → 通过即创建 GitHub Release（自动生成变更说明）；
 - **CI**（`.github/workflows/ci.yml`）：每次 push 在 GitHub 托管环境跑全量测试
   （重量级用例在无模型/无 torch 的环境自动跳过）；
 - **夜间云端训练**（`.github/workflows/evolution.yml`）：每天 22:00 UTC 用 GitHub Actions
   的算力采集新数据 → 训练挑战者 → 金标准门禁 → 通过则把模型发布为 Release 资产
   （`model-<run_id>` tag）；也可在 Actions 页面手动 dispatch；
 - **本地拉取晋升**（`scripts/pull_model_release.py`）：下载最新模型 Release，本地金丝雀 +
-  金标准门禁仍会复检后才晋升上线——云端训练、本地把关。
+  金标准门禁仍会复检后才晋升上线——云端训练、本地把关；
+- **依赖锁定**：`requirements.lock` 是当前已验证环境的完整快照（`pip freeze`），
+  复现部署环境可用 `pip install -r requirements.lock`；`requirements.txt` 保持宽松约束。
 
-推送走本机代理（仓库级 `http.proxy=127.0.0.1:7897`）；认证用 gh CLI（keyring 中已有 token）。
+推送走本机代理（仓库级 `http.proxy=127.0.0.1:7897`，代理未开时直连也可）；认证用 gh CLI（keyring 中已有 token）。
 
 ## Docker 部署
 

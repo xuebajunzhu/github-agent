@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import Settings
 from app.models.project import Project
 from app.models.user import QueryHistory
+from app.llm.laya_reranker import LayaReranker
 from app.services.analysis_service import AnalysisService
 from app.services.embedding_service import EmbeddingService, parse_embedding_id
 from app.utils.timeutil import maintenance_decay
@@ -41,6 +42,10 @@ class RecommendService:
         self._embedding = embedding
         self._vectors = vectors
         self._analysis = analysis
+        self._laya: LayaReranker | None = None
+        if settings.rerank_provider == "laya":
+            self._laya = LayaReranker(settings)
+            self._laya.preload_async()  # warm the checkpoint off the request path
 
     def recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
         query_vector = self._embedding.embed(query)
@@ -83,13 +88,51 @@ class RecommendService:
         results = results[:top_k]
 
         if self._settings.enable_llm_rerank and results:
-            results = self._rerank(query, results)
+            if self._laya is not None:
+                results = self._rerank_laya(query, results)
+            else:
+                results = self._rerank(query, results)
 
         self._record_history(query, top_k, len(results))
         return results
 
-    def _rerank(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
-        candidates = [
+    @staticmethod
+    def _apply_ranking(
+        ranking: list[int], reason: str, results: list[RecommendHit]
+    ) -> list[RecommendHit] | None:
+        """Reorder hits by a reranker's index list; None if the ranking is unusable."""
+        if not ranking:
+            return None
+        reordered: list[RecommendHit] = []
+        for index in ranking:
+            if isinstance(index, int) and 0 <= index < len(results) and results[index] not in reordered:
+                reordered.append(results[index])
+        for hit in results:
+            if hit not in reordered:
+                reordered.append(hit)
+        if reason and reordered:
+            reordered[0].reason = reason
+        return reordered
+
+    def _rerank_laya(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
+        """Local Laya rerank; falls back to the LLM reranker when unavailable."""
+        assert self._laya is not None
+        candidates = self._rerank_candidates(results)
+        try:
+            outcome = self._laya.rank_candidates(query, candidates)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Laya rerank failed: {exc}")
+            outcome = None
+        if outcome is not None:
+            reordered = self._apply_ranking(outcome[0], outcome[1], results)
+            if reordered is not None:
+                return reordered
+        logger.info("Laya rerank unusable; falling back to the LLM reranker.")
+        return self._rerank(query, results)
+
+    @staticmethod
+    def _rerank_candidates(results: list[RecommendHit]) -> list[dict]:
+        return [
             {
                 "full_name": hit.project.full_name,
                 "summary": hit.project.ai_summary or hit.project.description or "",
@@ -97,6 +140,9 @@ class RecommendService:
             }
             for hit in results
         ]
+
+    def _rerank(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
+        candidates = self._rerank_candidates(results)
         for analyzer in self._analysis.analyzers:
             if not analyzer.available():
                 continue
@@ -108,16 +154,11 @@ class RecommendService:
             if not outcome:
                 return results
             ranking, reason = outcome
-            reordered: list[RecommendHit] = []
-            for index in ranking:
-                if isinstance(index, int) and 0 <= index < len(results) and results[index] not in reordered:
-                    reordered.append(results[index])
-            for hit in results:
-                if hit not in reordered:
-                    reordered.append(hit)
-            reordered[0].reason = reason
-            logger.info(f"Reranked {len(results)} candidates with '{analyzer.name}'.")
-            return reordered
+            reordered = self._apply_ranking(ranking, reason, results)
+            if reordered is not None:
+                logger.info(f"Reranked {len(results)} candidates with '{analyzer.name}'.")
+                return reordered
+            return results
         return results
 
     def _record_history(self, query: str, top_k: int, result_count: int) -> None:

@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     local_model_path: str = "microsoft/phi-2"
     trained_model_path: str = "./models/repo-analyzer"
     enable_llm_rerank: bool = False
+    # Which reranker to use when enable_llm_rerank is on:
+    #   llm  = the primary analyzer (e.g. DeepSeek) rewrites ranking + reason
+    #   laya = local 421M decision model (zero cost, offline; weakly
+    #          discriminative on this domain -- experimental)
+    rerank_provider: str = "llm"  # llm | laya
 
     # -- Embedder --
     embedder_provider: str = "sentence_transformers"  # sentence_transformers | openai | trained | tfidf

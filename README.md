@@ -240,7 +240,8 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `VECTOR_STORE_BACKEND` | `chroma` | `chroma` / `memory` |
 | `SCHEDULER_ENABLED` | `true` | 设为 `false` 可禁用定时任务（如仅做 API 服务） |
 | `FETCH_INTERVAL_MINUTES` | 1440 | 检索周期（分钟） |
-| `ENABLE_LLM_RERANK` | `false` | 推荐结果用 LLM 重排 + 推荐理由 |
+| `ENABLE_LLM_RERANK` | `false` | 推荐结果重排开关（llm 约 +1s、laya 约 +0.2s 延迟） |
+| `RERANK_PROVIDER` | `llm` | `llm`（主分析器重排，生成推荐理由）/ `laya`（本地 421M 决策模型，零成本离线，实验性——实测对本领域区分度弱） |
 
 完整配置见 `.env.example`，全部支持环境变量或 `.env` 文件注入。
 

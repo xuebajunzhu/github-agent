@@ -1,7 +1,10 @@
-"""Simple in-memory per-IP rate limiter for public deployment.
+"""Simple in-memory per-client rate limiter for public deployment.
 
-Good enough for a single-process demo deployment; swap for a token-bucket
-based on Redis when scaling beyond one box.
+Behind a tunnel/reverse proxy every request arrives from the proxy's source
+address, so all users would share one bucket. Set TRUST_PROXY_HEADERS=true to
+rate-limit by the forwarded client IP instead -- forwarded headers are only
+honored from loopback clients, so a direct caller cannot spoof them. Swap for
+a token-bucket based on Redis when scaling beyond one box.
 """
 from __future__ import annotations
 
@@ -12,17 +15,33 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+_LOOPBACK = {"127.0.0.1", "::1"}
+# hard cap on tracked clients so spoofed/rotated IPs cannot grow the dict forever
+_MAX_TRACKED_CLIENTS = 10000
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, max_per_minute: int = 120):
+    def __init__(self, app, max_per_minute: int = 120, trust_proxy_headers: bool = False):
         super().__init__(app)
         self._max = max_per_minute
+        self._trust_proxy_headers = trust_proxy_headers
         self._hits: dict[str, deque[float]] = defaultdict(deque)
         self._last_sweep = time.monotonic()
 
-    async def dispatch(self, request: Request, call_next):
+    def _client_ip(self, request: Request) -> str:
         client = request.client
         ip = client.host if client else "unknown"
+        if not self._trust_proxy_headers or ip not in _LOOPBACK:
+            return ip
+        forwarded = request.headers.get("cf-connecting-ip")
+        if not forwarded:
+            xff = request.headers.get("x-forwarded-for")
+            if xff:
+                forwarded = xff.split(",", 1)[0].strip()
+        return forwarded or ip
+
+    async def dispatch(self, request: Request, call_next):
+        ip = self._client_ip(request)
         now = time.monotonic()
 
         hits = self._hits[ip]
@@ -37,8 +56,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
         hits.append(now)
 
-        # opportunistic cleanup so idle IPs do not accumulate forever
-        if now - self._last_sweep > 300:
+        # opportunistic cleanup so idle/spoofed IPs do not accumulate forever
+        if now - self._last_sweep > 300 or len(self._hits) > _MAX_TRACKED_CLIENTS:
             self._last_sweep = now
             stale = [ip for ip, stamps in self._hits.items() if not stamps or now - stamps[-1] > 600]
             for stale_ip in stale:

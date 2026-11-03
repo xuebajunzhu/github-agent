@@ -100,7 +100,9 @@ def load_repo_analyzer(model_dir: str | Path, device: str | None = None):
         num_use_cases=len(config["use_cases"]),
         encoder=encoder,
     )
-    state = torch.load(model_dir / WEIGHTS_FILE, map_location="cpu")
+    # weights_only=True: model files arrive from network releases; never run
+    # their pickle payload with full unpickler privileges
+    state = torch.load(model_dir / WEIGHTS_FILE, map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.to(device)
     model.eval()

@@ -22,6 +22,7 @@ class Project(Base):
     stars: Mapped[int] = mapped_column(Integer, default=0)
     forks: Mapped[int] = mapped_column(Integer, default=0)
     language: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    license: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)  # SPDX id
     topics: Mapped[list] = mapped_column(JSON, default=list)
     readme_excerpt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -36,6 +37,7 @@ class Project(Base):
 
     embedding_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     analysis_status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    analysis_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     last_analyzed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     def to_analysis_dict(self) -> dict:

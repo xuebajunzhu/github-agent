@@ -84,9 +84,11 @@ class SherpaOnnxTTS(TextToSpeech):
         return self._tts
 
     def synthesize(self, text: str) -> bytes:
-        tts = self._ensure_tts()
-        audio = tts.generate(text, sid=self._speaker_id, speed=self._speed)
+        # serialize the model call itself: sherpa-onnx makes no thread-safety
+        # guarantee for concurrent Generate() on a single instance
+        with self._lock:
+            tts = self._ensure_tts()
+            audio = tts.generate(text, sid=self._speaker_id, speed=self._speed)
         if len(audio.samples) == 0:
             raise RuntimeError("TTS produced no audio")
-        with self._lock:
-            return samples_to_wav(audio.samples, audio.sample_rate)
+        return samples_to_wav(audio.samples, audio.sample_rate)

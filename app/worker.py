@@ -44,7 +44,7 @@ async def _worker_lifecycle(settings: Settings):
 
 async def _run_forever() -> None:
     settings = Settings()
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings.log_file)
     logger.info(f"Starting 24/7 worker (db={settings.database_url.split('://')[0]}).")
     async with _worker_lifecycle(settings) as services:
         logger.info(

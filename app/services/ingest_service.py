@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
@@ -21,6 +22,7 @@ from app.services.github_service import (
     GitHubRateLimitError,
     GitHubService,
 )
+from app.utils.filelock import job_lock
 from app.utils.timeutil import utcnow
 from app.vectorstore.base import VectorStore
 
@@ -73,6 +75,13 @@ class IngestService:
         With keywords_per_fetch > 0 each call consumes the next slice of the
         keyword list (rotating); pass keywords explicitly to override.
         """
+        with job_lock() as acquired:
+            if not acquired:
+                logger.warning("Scheduled fetch skipped: another pipeline job is running.")
+                return _skipped_stats()
+            return self._run_scheduled_fetch(keywords)
+
+    def _run_scheduled_fetch(self, keywords: list[str] | None) -> dict:
         if keywords is None:
             keywords = self._next_keyword_slice()
         stats = IngestStats()
@@ -115,18 +124,30 @@ class IngestService:
 
     def process_backlog(self) -> dict:
         """Patrol sweep: analyze pending projects, embed analyzed-but-unembedded ones."""
-        stats = IngestStats()
-        with self._session_factory() as session:
-            self._analyze_pending(session, stats)
-            self._embed_pending(session, stats)
-        return stats.as_dict()
+        with job_lock() as acquired:
+            if not acquired:
+                logger.warning("Backlog processing skipped: another pipeline job is running.")
+                return _skipped_stats()
+            stats = IngestStats()
+            with self._session_factory() as session:
+                self._analyze_pending(session, stats)
+                self._embed_pending(session, stats)
+            return stats.as_dict()
 
     def requeue_failed(self) -> int:
-        """Put failed analyses back into the pending queue for another attempt."""
+        """Put failed analyses back into the pending queue, capped by attempts.
+
+        Without the cap a permanently failing project would retry forever,
+        re-occupy the head of the id-ordered queue and starve newer projects.
+        """
+        max_attempts = self._settings.analysis_max_attempts
         with self._session_factory() as session:
             count = (
                 session.query(Project)
-                .filter(Project.analysis_status == "failed")
+                .filter(
+                    Project.analysis_status == "failed",
+                    Project.analysis_attempts < max_attempts,
+                )
                 .update({"analysis_status": "pending"})
             )
             session.commit()
@@ -139,36 +160,52 @@ class IngestService:
         stats = IngestStats(fetched=len(repos))
         with self._session_factory() as session:
             for data in repos:
-                project = (
-                    session.query(Project).filter_by(github_id=data["github_id"]).one_or_none()
-                )
-                if project is None:
-                    project = Project(
-                        github_id=data["github_id"],
-                        full_name=data["full_name"],
-                        url=data["url"],
-                        description=data["description"],
-                        stars=data["stars"],
-                        forks=data["forks"],
-                        language=data["language"],
-                        topics=data["topics"],
-                        pushed_at=data["pushed_at"],
-                        analysis_status="pending",
+                is_new = False
+                project = None
+                try:
+                    # begin_nested(): when two processes (API + worker) insert
+                    # the same github_id between query and flush, only THIS row
+                    # rolls back and folds into an update instead of failing
+                    # the whole batch at commit time.
+                    with session.begin_nested():
+                        project = (
+                            session.query(Project)
+                            .filter_by(github_id=data["github_id"])
+                            .one_or_none()
+                        )
+                        if project is None:
+                            is_new = True
+                            session.add(
+                                Project(
+                                    github_id=data["github_id"],
+                                    full_name=data["full_name"],
+                                    url=data["url"],
+                                    description=data["description"],
+                                    stars=data["stars"],
+                                    forks=data["forks"],
+                                    language=data["language"],
+                                    license=data.get("license"),
+                                    topics=data["topics"],
+                                    pushed_at=data["pushed_at"],
+                                    analysis_status="pending",
+                                )
+                            )
+                        else:
+                            _apply_repo_data(project, data)
+                        session.flush()
+                except IntegrityError:
+                    is_new = False
+                    project = (
+                        session.query(Project)
+                        .filter_by(github_id=data["github_id"])
+                        .one_or_none()
                     )
-                    session.add(project)
+                    if project is not None:
+                        _apply_repo_data(project, data)
+                if is_new:
                     stats.created += 1
-                    continue
-                project.stars = data["stars"]
-                project.forks = data["forks"]
-                project.pushed_at = data["pushed_at"]
-                project.topics = data["topics"]
-                project.language = data["language"] or project.language
-                if (data["description"] or "") != (project.description or ""):
-                    project.description = data["description"]
-                    # description drives the analysis/embedding -> redo both
-                    project.analysis_status = "pending"
-                    project.embedding_id = None
-                stats.updated += 1
+                elif project is not None:
+                    stats.updated += 1
             session.commit()
             self._analyze_pending(session, stats)
             self._embed_pending(session, stats)
@@ -176,6 +213,13 @@ class IngestService:
 
     def refresh_existing(self, limit: int | None = None) -> dict:
         """Update stored projects (stars/forks/pushed_at/description) from GitHub."""
+        with job_lock() as acquired:
+            if not acquired:
+                logger.warning("Refresh skipped: another pipeline job is running.")
+                return _skipped_stats()
+            return self._refresh_existing(limit)
+
+    def _refresh_existing(self, limit: int | None) -> dict:
         limit = limit or self._settings.refresh_batch_size
         stats = IngestStats()
         with self._session_factory() as session:
@@ -185,7 +229,13 @@ class IngestService:
             for project in projects:
                 try:
                     data = self._github.get_repository(project.full_name)
-                except (GitHubRateLimitError, GitHubAPIError) as exc:
+                except GitHubRateLimitError as exc:
+                    # per-project retrying burns ~8 min per repo while the
+                    # hourly quota is gone; abort the sweep and let the next
+                    # scheduled run pick it up
+                    logger.warning(f"Refresh aborted at {project.full_name}: {exc}")
+                    break
+                except GitHubAPIError as exc:
                     logger.warning(f"Refresh skipped for {project.full_name}: {exc}")
                     continue
                 project.stars = data["stars"]
@@ -204,10 +254,16 @@ class IngestService:
         return stats.as_dict()
 
     def _analyze_pending(self, session, stats: IngestStats) -> None:
+        max_attempts = self._settings.analysis_max_attempts
+        # attempts ASC puts fresh projects (0 attempts) ahead of recurring
+        # failures, so poison projects can't starve the head of the queue
         pending = (
             session.query(Project)
-            .filter(Project.analysis_status == "pending")
-            .order_by(Project.id)
+            .filter(
+                Project.analysis_status == "pending",
+                Project.analysis_attempts < max_attempts,
+            )
+            .order_by(Project.analysis_attempts.asc(), Project.id.asc())
             .limit(self._settings.github_max_analyze_per_run)
             .all()
         )
@@ -217,6 +273,9 @@ class IngestService:
         # README fetches are GitHub-API-bound: keep them sequential in this
         # thread so rate limits are respected.
         for project in pending:
+            # count the attempt up front (committed before analysis runs) so a
+            # crash mid-analysis still burns an attempt instead of looping
+            project.analysis_attempts = (project.analysis_attempts or 0) + 1
             if self._settings.github_fetch_readme and not project.readme_excerpt:
                 try:
                     project.readme_excerpt = self._github.get_readme_excerpt(project.full_name)
@@ -242,6 +301,7 @@ class IngestService:
             project.ai_tags = result.tags
             project.ai_dependencies = result.dependencies
             project.analysis_status = "done"
+            project.analysis_attempts = 0
             project.last_analyzed_at = utcnow()
             stats.analyzed += 1
             logger.info(f"Analyzed {project.full_name} via '{result.provider}'.")
@@ -279,3 +339,24 @@ class IngestService:
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Embedding failed for {project.full_name}: {exc}")
             session.commit()
+
+
+def _skipped_stats() -> dict:
+    """IngestStats-shaped dict for a run that lost the job-lock race, so
+    callers (patrol report, scheduler) can read the usual keys."""
+    return {**IngestStats().as_dict(), "status": "skipped", "reason": "another job is running"}
+
+
+def _apply_repo_data(project: Project, data: dict) -> None:
+    """Refresh stored fields of an existing project from freshly fetched data."""
+    project.stars = data["stars"]
+    project.forks = data["forks"]
+    project.pushed_at = data["pushed_at"]
+    project.topics = data["topics"]
+    project.language = data["language"] or project.language
+    project.license = data.get("license") or project.license
+    if (data["description"] or "") != (project.description or ""):
+        project.description = data["description"]
+        # description drives the analysis/embedding -> redo both
+        project.analysis_status = "pending"
+        project.embedding_id = None

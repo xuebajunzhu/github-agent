@@ -52,6 +52,11 @@ async def lifespan(app: FastAPI):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     configure_logging(settings.debug, settings.log_file)
+    if settings.secret_key == "please-change-me" or settings.admin_token == "change-me-admin-token":
+        logger.warning(
+            "Default SECRET_KEY/ADMIN_TOKEN in use -- change them in .env before "
+            "exposing this service publicly."
+        )
 
     app = FastAPI(
         title="GitHub Agent",
@@ -72,7 +77,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     if settings.rate_limit_per_minute > 0:
-        app.add_middleware(RateLimitMiddleware, max_per_minute=settings.rate_limit_per_minute)
+        app.add_middleware(
+            RateLimitMiddleware,
+            max_per_minute=settings.rate_limit_per_minute,
+            trust_proxy_headers=settings.trust_proxy_headers,
+        )
 
     for router in all_routers:
         app.include_router(router)

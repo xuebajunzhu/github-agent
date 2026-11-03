@@ -48,6 +48,8 @@ def decode(token: str, secret: str) -> dict:
         payload = json.loads(_b64url_decode(body_b64))
     except (ValueError, json.JSONDecodeError) as exc:
         raise JWTError("Invalid payload") from exc
-    if payload.get("exp") is not None and payload["exp"] < time.time():
-        raise JWTError("Token expired")
+    # a token without a numeric exp must never validate as "never expires"
+    exp = payload.get("exp")
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool) or exp < time.time():
+        raise JWTError("Token expired or missing exp")
     return payload

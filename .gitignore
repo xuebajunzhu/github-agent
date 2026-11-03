@@ -19,3 +19,7 @@ build/
 *.egg-info/
 .idea/
 .vscode/
+*.db-shm
+*.db-wal
+app/training/data/
+*.lock

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.recommend import RecommendationItem
 from app.speech.asr import SpeechError, SpeechToText
@@ -23,7 +23,8 @@ _MARKDOWN_RE = re.compile(r"[#*`_\[\]()!<>|]")
 
 
 class SpeakRequest(BaseModel):
-    text: str
+    # bounded: TTS cost scales with text length; unbounded text is a CPU/DoS lever
+    text: str = Field(max_length=500)
 
 
 class VoiceAskResponse(BaseModel):
@@ -88,13 +89,28 @@ def voice_status(request: Request) -> dict:
     }
 
 
-@router.post("/transcribe")
-async def voice_transcribe(request: Request, file: UploadFile = File(...)) -> dict:
-    services = request.app.state.services
-    stt = _require_stt(services)
-    audio = await file.read()
+def _read_audio(file: UploadFile, max_mb: int) -> bytes:
+    """Read the upload with a hard size cap; reads one extra byte to detect overflow."""
+    limit = max(1, max_mb) * 1024 * 1024
+    audio = file.file.read(limit + 1)
+    if len(audio) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Audio upload exceeds the {max_mb}MB limit.",
+        )
     if not audio:
         raise HTTPException(status_code=400, detail="Empty audio upload")
+    return audio
+
+
+@router.post("/transcribe")
+def voice_transcribe(request: Request, file: UploadFile = File(...)) -> dict:
+    # sync def on purpose: whisper inference is CPU-bound and would block the
+    # event loop if this ran as async def; FastAPI runs sync routes in its
+    # threadpool instead.
+    services = request.app.state.services
+    stt = _require_stt(services)
+    audio = _read_audio(file, services.settings.max_upload_mb)
     try:
         text = stt.transcribe(audio, file.filename or "audio.wav")
     except SpeechError as exc:
@@ -118,13 +134,15 @@ def voice_speak(payload: SpeakRequest, request: Request) -> Response:
 
 
 @router.post("/ask", response_model=VoiceAskResponse)
-async def voice_ask(request: Request, file: UploadFile = File(...)) -> VoiceAskResponse:
-    """One-shot voice interaction: audio in -> recommendations -> spoken audio out."""
+def voice_ask(request: Request, file: UploadFile = File(...)) -> VoiceAskResponse:
+    """One-shot voice interaction: audio in -> recommendations -> spoken audio out.
+
+    sync def (same reasoning as /transcribe): ASR + embedding + TTS are all
+    CPU-bound and must stay off the event loop.
+    """
     services = request.app.state.services
     stt = _require_stt(services)
-    audio = await file.read()
-    if not audio:
-        raise HTTPException(status_code=400, detail="Empty audio upload")
+    audio = _read_audio(file, services.settings.max_upload_mb)
     try:
         query = stt.transcribe(audio, file.filename or "audio.wav")
     except SpeechError as exc:

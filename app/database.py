@@ -38,3 +38,27 @@ def init_db(engine: Engine) -> None:
     import app.models  # noqa: F401  # ensure all ORM models are registered
 
     Base.metadata.create_all(engine)
+    _add_missing_columns(engine)
+
+
+def _add_missing_columns(engine: Engine) -> None:
+    """Additive migration for pre-existing databases: create_all never alters
+    tables that already exist."""
+    from sqlalchemy import inspect, text
+
+    migrations: dict[str, dict[str, str]] = {
+        "projects": {
+            "analysis_attempts": "ALTER TABLE projects ADD COLUMN analysis_attempts INTEGER NOT NULL DEFAULT 0",
+            "license": "ALTER TABLE projects ADD COLUMN license VARCHAR(64)",
+        },
+    }
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table, columns in migrations.items():
+            if table not in existing_tables:
+                continue
+            present = {column["name"] for column in inspector.get_columns(table)}
+            for column_name, ddl in columns.items():
+                if column_name not in present:
+                    conn.execute(text(ddl))

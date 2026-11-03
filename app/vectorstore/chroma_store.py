@@ -5,6 +5,8 @@ from loguru import logger
 
 from app.vectorstore.base import VectorStore, VectorStoreError
 
+_SPACE_FINGERPRINT = "space_fingerprint"
+
 
 class ChromaVectorStore(VectorStore):
     def __init__(self, persist_dir: str, collection_name: str):
@@ -18,6 +20,29 @@ class ChromaVectorStore(VectorStore):
         logger.info(
             f"Chroma vector store ready: path={persist_dir}, collection={collection_name}"
         )
+
+    def ensure_space(self, fingerprint: str) -> bool:
+        """Refuse to mix embedding spaces: if the stored fingerprint differs
+        from the embedder selected at startup, wipe the collection (the caller
+        then marks every project for re-embedding)."""
+        metadata = self._collection.metadata or {}
+        if metadata.get(_SPACE_FINGERPRINT) == fingerprint:
+            return False
+        previous = metadata.get(_SPACE_FINGERPRINT)
+        logger.warning(
+            f"Embedding space changed ({previous!r} -> {fingerprint!r}); "
+            "wiping the collection so the index is rebuilt in a single space."
+        )
+        name = self._collection.name
+        try:
+            self._client.delete_collection(name)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Chroma collection wipe failed (continuing): {exc}")
+        self._collection = self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine", _SPACE_FINGERPRINT: fingerprint},
+        )
+        return True
 
     def upsert(
         self,

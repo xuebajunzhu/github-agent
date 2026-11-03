@@ -114,14 +114,14 @@ class PatrolService:
                 .limit(limit)
                 .all()
             )
-            ids = [row.embedding_id for row in rows]
-            projects = rows
+        ids = [row.embedding_id for row in rows]
+        projects = rows
         if not ids:
             return 0
-        missing_ids = self._vectors.existing_ids(ids)
+        present_ids = self._vectors.existing_ids(ids)
         repaired = 0
         for project in projects:
-            if project.embedding_id in missing_ids:
+            if project.embedding_id in present_ids:
                 continue
             try:
                 text = build_project_text(project)

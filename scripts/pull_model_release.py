@@ -61,7 +61,11 @@ def main() -> None:
                 for chunk in response.iter_bytes(1 << 16):
                     handle.write(chunk)
         with tarfile.open(archive_path, "r:gz") as tar:
-            tar.extractall(extract_dir)
+            try:
+                # filter="data" blocks path traversal / device nodes / absolute paths
+                tar.extractall(extract_dir, filter="data")
+            except TypeError:  # Python without the tarfile extraction-filter backport
+                tar.extractall(extract_dir)
         staging = extract_dir / "staging-ci"
         print(f"Downloaded and extracted challenger to {staging}")
 
@@ -114,7 +118,9 @@ def main() -> None:
         embedder = getattr(services.embedding, "embedder", None)
         if embedder is not None and hasattr(embedder, "_reload_if_swapped"):
             embedder._reload_if_swapped()
-        reembedded = evolution._reembed_all()
+    # Re-embed OUTSIDE the swap lock: embed() re-acquires the non-reentrant
+    # MODEL_SWAP_LOCK, so calling it under the lock deadlocks.
+    reembedded = evolution._reembed_all()
     shutil.rmtree(extract_dir, ignore_errors=True)
     print(f"PROMOTED {version}; re-embedded {reembedded} vectors.")
 

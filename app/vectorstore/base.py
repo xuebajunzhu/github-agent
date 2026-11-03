@@ -42,3 +42,14 @@ class VectorStore(ABC):
         Used by the 24/7 patrol to self-heal index drift (e.g. after a restart
         of an in-memory store).
         """
+
+    def ensure_space(self, fingerprint: str) -> bool:
+        """Ensure stored vectors belong to the given embedding space.
+
+        Returns True when the store was wiped and every project must be
+        re-embedded. The default backend is ephemeral/empty and never wipes;
+        persistent backends should override this to detect a mismatch between
+        the stored vectors and the embedder selected at startup (mixing two
+        embedding spaces silently corrupts similarity search).
+        """
+        return False

@@ -6,8 +6,9 @@ self-consistency matters). Reusing it means one local model powers both
 analysis and semantic search -- fully offline, Chinese queries included.
 
 Hot reload: when the self-evolution loop swaps the deployed model, the stamp
-check reloads here too; the evolution service rebuilds stored vectors in the
-same swap window so project/query spaces stay consistent.
+check reloads here too; the evolution service re-embeds stored vectors in the
+same cycle (bounded inline, remainder parked for patrol) so project/query
+spaces stay consistent.
 """
 from __future__ import annotations
 
@@ -27,6 +28,12 @@ class TrainedEmbedder(Embedder):
         self._model, self._tokenizer, config, self._device = load_repo_analyzer(model_path)
         self.dimension = self._model.encoder.config.hidden_size
         self._max_len = config["max_len"]
+        # otherwise the first embed() would reload the same model a second time
+        self._stamp = stamp(self._model_path)
+
+    @property
+    def space_id(self) -> str:
+        return f"{self.name}-{self.dimension}"
 
     def _reload_if_swapped(self) -> None:
         current = stamp(self._model_path)

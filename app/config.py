@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     admin_token: str = "change-me-admin-token"
     # Public deployment guards
     rate_limit_per_minute: int = 120
+    # Trust CF-Connecting-IP / X-Forwarded-For (loopback clients only) when
+    # deployed behind a tunnel/reverse proxy, so limits apply per real client.
+    trust_proxy_headers: bool = False
     max_upload_mb: int = 10
     log_file: Optional[str] = "./logs/agent.log"
 
@@ -60,9 +63,16 @@ class Settings(BaseSettings):
     github_readme_max_chars: int = 2000
     github_max_retries: int = 3
     github_backoff_seconds: float = 2.0
+    # Give up on a project after this many failed analysis attempts (patrol
+    # keeps requeueing failures; without a cap a permanently failing project
+    # retries forever and can starve the queue).
+    analysis_max_attempts: int = 5
 
     # -- Security --
     fernet_key: Optional[str] = None  # Fernet key for encrypting stored GitHub tokens
+    # Optional bearer token protecting the MCP endpoint (/mcp). Unset = open
+    # (rate-limited); set it before exposing MCP publicly.
+    mcp_auth_token: Optional[str] = None
 
     # -- LLM analysis --
     llm_provider: str = "openai"  # openai | anthropic | trained | local | rule
@@ -116,6 +126,7 @@ class Settings(BaseSettings):
     evolution_enabled: bool = True
     evolution_interval_minutes: int = 1440
     evolution_train_epochs: int = 2
+    evolution_train_timeout_seconds: int = 7200  # hard stop for the training subprocess
     evolution_min_new_samples: int = 200
     evolution_max_train_samples: int = 12000
     evolution_min_topic_freq: int = 40

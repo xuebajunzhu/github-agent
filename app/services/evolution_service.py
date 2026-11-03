@@ -22,6 +22,7 @@ models/evolution_history.json.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -38,6 +39,7 @@ from app.ml.model_registry import (
     current_version,
     read_version_info,
 )
+from app.utils.filelock import job_lock
 from app.utils.timeutil import utcnow
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -95,9 +97,12 @@ class EvolutionService:
     def _save_history(self, report: dict) -> None:
         self.history.append(report)
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        HISTORY_FILE.write_text(
+        # atomic write: a crash mid-write must not corrupt the lineage file
+        tmp = HISTORY_FILE.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(self.history[-30:], ensure_ascii=False, indent=2), encoding="utf-8"
         )
+        os.replace(tmp, HISTORY_FILE)
 
     def current_version(self) -> str | None:
         return current_version(self._settings.trained_model_path)
@@ -178,6 +183,7 @@ class EvolutionService:
 
     def _train_staging(self, data_dir: Path, model_dir: Path, epochs: int) -> None:
         env_python = sys.executable
+        timeout = self._settings.evolution_train_timeout_seconds
         commands = [
             [env_python, str(TRAINING_DIR / "train.py"),
              "--data-dir", str(data_dir), "--model-dir", str(model_dir), "--epochs", str(epochs)],
@@ -185,10 +191,19 @@ class EvolutionService:
              "--data-dir", str(data_dir), "--model-dir", str(model_dir)],
         ]
         for command in commands:
-            result = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True)
+            try:
+                result = subprocess.run(
+                    command, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout
+                )
+            except subprocess.TimeoutExpired:
+                # without this the evolution thread hangs forever and the
+                # max_instances=1 job never runs again
+                raise RuntimeError(
+                    f"training step timed out after {timeout}s: {command[1]}"
+                ) from None
             if result.returncode != 0:
                 tail = (result.stderr or result.stdout or "")[-1500:]
-                raise RuntimeError(f"training step failed: {command[-1]}: {tail}")
+                raise RuntimeError(f"training step failed: {command[1]}: {tail}")
 
     # --------------------------------------------------------------- repairs
 
@@ -211,6 +226,9 @@ class EvolutionService:
                     shutil.move(str(live), str(backup))
                 shutil.move(str(candidate), str(live))
             logger.warning(f"Rolled back to archived model {candidate.name}.")
+            # the restored model has a different encoder space -> the whole
+            # index must be rebuilt, not just missing vectors
+            self._park_all_vectors()
             return EvolutionReport(
                 started_at=utcnow().isoformat(),
                 finished_at=utcnow().isoformat(),
@@ -220,13 +238,40 @@ class EvolutionService:
         logger.error("No archive passed canary; keeping rule-based fallback and forcing retrain.")
         return None
 
+    def _park_all_vectors(self) -> None:
+        """Mark every analyzed project for re-embedding (patrol rebuilds them)."""
+        if self._session_factory is None:  # tests wire a service without a DB
+            return
+        from app.models.project import Project
+
+        with self._session_factory() as session:
+            count = (
+                session.query(Project)
+                .filter(Project.analysis_status == "done")
+                .update({"embedding_id": None}, synchronize_session=False)
+            )
+            session.commit()
+        if count:
+            logger.warning(f"Parked {count} projects for re-embedding after model restore.")
+
     # ----------------------------------------------------------- the cycle
 
     def run_cycle(self, force: bool = False, max_samples: int | None = None, epochs: int | None = None) -> dict:
+        """One self-evolution cycle; exclusive against all other pipeline jobs."""
+        with job_lock() as acquired:
+            if not acquired:
+                logger.warning("Evolution skipped: another pipeline job is already running.")
+                return {"outcome": "skipped", "reason": "another job is running"}
+            return self._run_cycle(force=force, max_samples=max_samples, epochs=epochs)
+
+    def _run_cycle(self, force: bool = False, max_samples: int | None = None, epochs: int | None = None) -> dict:
         report = EvolutionReport(started_at=utcnow().isoformat())
         self.run_count += 1
         try:
-            repair = self._repair_deployed_model()
+            if self._settings.evolution_autorollback:
+                repair = self._repair_deployed_model()
+            else:
+                repair = None
             if repair is not None:
                 self.last_report = repair.as_dict()
                 self._save_history(self.last_report)
@@ -335,13 +380,20 @@ class EvolutionService:
             embedder = getattr(self._embedding, "embedder", None)
             if embedder is not None and hasattr(embedder, "_reload_if_swapped"):
                 embedder._reload_if_swapped()
-            report.reembedded = self._reembed_all()
+
+        # Re-embed OUTSIDE the swap lock: _reembed_all goes through embed(),
+        # which re-acquires the non-reentrant MODEL_SWAP_LOCK -- calling it
+        # under the lock deadlocks the evolution thread and then the whole
+        # service (every embed waits on the same lock).
+        report.reembedded = self._reembed_all()
 
         report.outcome = "promoted"
         report.reason = f"challenger promoted as version {version}; archived {archive_dir.name}"
 
     def _reembed_all(self) -> int:
         """Rebuild vectors with the new model space (bounded; patrol finishes)."""
+        if self._session_factory is None:  # tests wire a service without a DB
+            return 0
         from app.models.project import Project
         from app.services.embedding_service import build_project_text, project_embedding_id
 
@@ -355,6 +407,7 @@ class EvolutionService:
                 .limit(max(cap, 1))
                 .all()
             )
+            rebuilt_ids: set[int] = set()
             for project in projects:
                 try:
                     text = build_project_text(project)
@@ -367,10 +420,26 @@ class EvolutionService:
                         [{"github_id": project.github_id, "full_name": project.full_name}],
                     )
                     project.embedding_id = embedding_id
+                    rebuilt_ids.add(project.id)
                     reembedded += 1
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"Re-embed failed for {project.full_name}: {exc}")
                     project.embedding_id = None  # patrol will finish it
+            # Projects beyond the inline cap still hold stale-space vectors.
+            # Park them (embedding_id=None) so patrol re-embeds them; patrol
+            # only fills *missing* vectors, so leaving them in place would mix
+            # two embedding spaces forever.
+            parked = (
+                session.query(Project)
+                .filter(
+                    Project.analysis_status == "done",
+                    Project.embedding_id.isnot(None),
+                    ~Project.id.in_(rebuilt_ids),
+                )
+                .update({"embedding_id": None}, synchronize_session=False)
+            )
+            if parked:
+                logger.info(f"Parked {parked} projects for incremental re-embedding by patrol.")
             session.commit()
         logger.info(f"Re-embedded {reembedded} vectors in the new model space.")
         return reembedded

@@ -11,6 +11,7 @@ from app.models.project import Project
 from app.models.user import QueryHistory
 from app.services.analysis_service import AnalysisService
 from app.services.embedding_service import EmbeddingService, parse_embedding_id
+from app.utils.timeutil import maintenance_decay
 from app.vectorstore.base import VectorStore, VectorStoreError
 
 
@@ -74,6 +75,11 @@ class RecommendService:
                     dependencies=list(project.ai_dependencies or []),
                 )
             )
+        # trust signal: long-unmaintained repos decay slightly so actively
+        # maintained alternatives win ties; unknown pushed_at is not punished
+        for hit in results:
+            hit.score = round(hit.score * maintenance_decay(hit.project.pushed_at), 6)
+        results.sort(key=lambda hit: hit.score, reverse=True)
         results = results[:top_k]
 
         if self._settings.enable_llm_rerank and results:

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loguru import logger
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.services.analysis_service import AnalysisService
+from app.services.digest_service import DigestService
 from app.services.embedding_service import EmbeddingService
 from app.services.evolution_service import EvolutionService
 from app.services.github_service import GitHubService
@@ -33,6 +35,7 @@ class ServiceContainer:
     token_cipher: TokenCipher
     patrol: PatrolService
     evolution: EvolutionService
+    digest: DigestService
     stt: SpeechToText | None = None
     tts: TextToSpeech | None = None
 
@@ -46,6 +49,11 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
     analysis = AnalysisService(build_analyzer_chain(settings))
     embedding = EmbeddingService(settings)
     vectors = create_vector_store(settings)
+    # Space-consistency guard: a persistent store whose vectors were built by
+    # a different embedder (provider switch, dimension change) silently
+    # corrupts similarity search. Wipe + mark everything for re-embed instead.
+    if vectors.ensure_space(embedding.space_id):
+        _park_all_projects_for_reembed(session_factory)
     github = GitHubService(settings)
     ingest = IngestService(settings, session_factory, github, analysis, embedding, vectors)
     recommend = RecommendService(settings, session_factory, embedding, vectors, analysis)
@@ -64,6 +72,24 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
         token_cipher=TokenCipher(settings.fernet_key, settings.secret_key),
         patrol=patrol,
         evolution=evolution,
+        digest=DigestService(settings, session_factory),
         stt=build_stt(settings),
         tts=build_tts(settings),
     )
+
+
+def _park_all_projects_for_reembed(session_factory: sessionmaker) -> None:
+    from app.models.project import Project
+
+    with session_factory() as session:
+        count = (
+            session.query(Project)
+            .filter(Project.analysis_status == "done")
+            .update({"embedding_id": None}, synchronize_session=False)
+        )
+        session.commit()
+    if count:
+        logger.warning(
+            f"Embedding space changed: parked {count} projects for re-embedding "
+            "(patrol/process_backlog rebuilds them incrementally)."
+        )

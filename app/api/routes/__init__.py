@@ -1,7 +1,7 @@
 """Router registry."""
 from fastapi import APIRouter
 
-from app.api.routes import admin, auth, feedback, health, projects, recommend, voice
+from app.api.routes import admin, auth, feedback, health, mcp, projects, recommend, voice
 
 all_routers: list[APIRouter] = [
     health.router,
@@ -11,4 +11,5 @@ all_routers: list[APIRouter] = [
     admin.router,
     voice.router,
     feedback.router,
+    mcp.router,
 ]

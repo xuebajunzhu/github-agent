@@ -175,6 +175,8 @@ class GitHubService:
 
     @staticmethod
     def _normalize_repo(item: dict) -> dict:
+        license_info = item.get("license") or {}
+        spdx = license_info.get("spdx_id")
         return {
             "github_id": item["id"],
             "full_name": item["full_name"],
@@ -183,6 +185,7 @@ class GitHubService:
             "stars": int(item.get("stargazers_count") or 0),
             "forks": int(item.get("forks_count") or 0),
             "language": item.get("language"),
+            "license": spdx if spdx and spdx != "NOASSERTION" else None,
             "topics": list(item.get("topics") or []),
             "pushed_at": parse_github_datetime(item.get("pushed_at")),
         }

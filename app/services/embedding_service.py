@@ -42,6 +42,12 @@ class EmbeddingService:
     def provider_name(self) -> str:
         return self.embedder.name
 
+    @property
+    def space_id(self) -> str:
+        """Fingerprint of the embedding space actually in use; the vector
+        store persists it and refuses to mix spaces across restarts."""
+        return self.embedder.space_id
+
     def embed(self, text: str) -> list[float]:
         return self.embedder.embed_text(text)
 

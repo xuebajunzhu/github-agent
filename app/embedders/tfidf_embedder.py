@@ -5,6 +5,11 @@ SHA-256, unlike Python's salted hash()) with sublinear term frequency and L2
 normalization. Deterministic and instant, but quality is below real embedding
 models -- enable it explicitly via EMBEDDER_PROVIDER=tfidf when no better
 option is available.
+
+Chinese text has no spaces, so CJK runs are split into character bigrams:
+without this a whole Chinese sentence collapses into a single bucket and the
+fallback path returns near-random recommendations for the project's primary
+query language.
 """
 from __future__ import annotations
 
@@ -15,7 +20,19 @@ from collections import Counter
 
 from app.embedders.base import Embedder
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_LATIN_RE = re.compile(r"[a-z0-9]+")
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _tokenize(text: str) -> list[str]:
+    tokens = _LATIN_RE.findall(text.lower())
+    for match in _CJK_RUN_RE.finditer(text):
+        run = match.group()
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens.extend(a + b for a, b in zip(run, run[1:]))
+    return tokens
 
 
 class HashingTfidfEmbedder(Embedder):
@@ -24,12 +41,16 @@ class HashingTfidfEmbedder(Embedder):
     def __init__(self, dimension: int = 384):
         self.dimension = max(16, dimension)
 
+    @property
+    def space_id(self) -> str:
+        return f"{self.name}-{self.dimension}"
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         return [self._embed_one(text) for text in texts]
 
     def _embed_one(self, text: str) -> list[float]:
         vector = [0.0] * self.dimension
-        counts = Counter(_TOKEN_RE.findall(text.lower()))
+        counts = Counter(_tokenize(text))
         for token, count in counts.items():
             bucket = int.from_bytes(hashlib.sha256(token.encode("utf-8")).digest()[:8], "big")
             index = bucket % self.dimension

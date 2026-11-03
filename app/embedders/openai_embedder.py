@@ -16,6 +16,10 @@ class OpenAIEmbedder(Embedder):
         self._model = settings.openai_embedding_model
         self.dimension = settings.embedding_dimension
 
+    @property
+    def space_id(self) -> str:
+        return f"{self.name}:{self._model}"
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         from openai import OpenAI
 

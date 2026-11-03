@@ -1,6 +1,8 @@
 # GitHub 开源项目智能检索与分析 Agent
 
-定时从 GitHub 检索开源项目，用可插拔的大模型自动生成摘要、场景与标签，向量化入库；用户输入具体场景时，通过语义搜索推荐相关项目及其依赖。
+定时从 GitHub 检索开源项目，用可插拔的大模型自动生成摘要、场景与标签，向量化入库；用户输入具体场景时，通过语义搜索推荐相关项目及其依赖。推荐结果自带**可信信号**（stars、license、最近 push、维护度分级、索引时间）——全部来自实时抓取的真实数据，不是模型记忆，因此不存在"幻觉项目名"问题。
+
+同时内置 **MCP Server**（`POST /mcp`），AI 编码 agent（Claude Code / Cursor 等）在自主选型依赖时可以把本索引当作实时、可验证的项目数据源。
 
 全部核心组件采用成熟开源方案：FastAPI + SQLAlchemy + APScheduler + httpx + Chroma + sentence-transformers，LLM 支持 OpenAI / Anthropic / 本地模型 / 规则兜底四级降级。
 
@@ -8,11 +10,12 @@
 
 - **定时检索**：APScheduler 周期性按关键词 + 星标数搜索 GitHub 仓库，并刷新已入库项目。
 - **AI 分析**：自动生成 `summary` / `use_cases` / `tags` / `dependencies`，支持五级 provider：**本地训练模型（默认，零成本）** → OpenAI/Anthropic → 本地小模型 → 规则兜底（永不失败）。
-- **自训练模型**：`training/` 内置完整训练流水线（采集 → 弱监督标注 → CPU 训练 → 评估），在 Windows 上约 1 小时训出专属的仓库分析模型，详见 [training/README.md](training/README.md)。模型质量由**独立手工评测集**把关（90 个名仓库手标 + 20 个对抗用例 + 结构检查，已接入 pytest 回归门禁）。
+- **自训练模型**：`training/` 内置完整训练流水线（采集 → 弱监督标注 → CPU 训练 → 评估），在 Windows 上约 1 小时训出专属的仓库分析模型，详见 [training/README.md](training/README.md)。模型质量由**独立手工评测集**把关（107 个名仓库手标 + 对抗用例 + 结构检查）；本地跑 `pytest` 时对已训练模型执行金标准回归门禁（CI 环境无 torch/模型时自动跳过，云端门禁见 evolution 工作流）。
 - **语音交互（全离线）**：说话描述场景 → 离线语音识别（faster-whisper）→ 语义推荐 → 离线语音播报（sherpa-onnx + Melo-TTS 中英混读）。内置网页 `GET /api/voice/page`，麦克风一键交互。
 - **向量化存储**：自训练模型的 encoder 直接做语义检索（中英文查询）；也可切换 sentence-transformers / OpenAI / 哈希 TF-IDF 兜底。
-- **场景推荐**：`POST /api/recommend` 输入自然语言场景，返回语义最相似的项目、匹配分数与可能涉及的依赖，可选 LLM 重排并生成推荐理由。
-- **GitHub OAuth**：authlib 实现登录，用户 access token 加密（Fernet）入库；登录用户的 token 可提升 API 限额（60 → 5000 次/小时）。
+- **场景推荐**：`POST /api/recommend` 输入自然语言场景，返回语义最相似的项目、匹配分数与可能涉及的依赖，可选 LLM 重排并生成推荐理由；长期未维护的仓库在排序中轻度降权（`maintenance` 字段标注 active/quiet/stale）。
+- **MCP Server**：`POST /mcp` 实现 Model Context Protocol 的 tools 能力（Streamable HTTP / JSON-RPC），暴露 `recommend_scenario`、`list_projects`、`get_project` 三个工具，供 AI agent 实时查询已验证的开源项目索引；可选 `MCP_AUTH_TOKEN` Bearer 认证。
+- **GitHub OAuth**：authlib 实现登录，用户 access token 加密（Fernet）入库并签发 JWT。（注意：登录 token 提升检索限额、JWT 保护资源目前**尚未接线**，属于后续演进项。）
 - **全链路降级**：任何外部依赖（LLM API、embedding 模型、语音模型、Chroma、GitHub API）不可用时都有兜底路径，服务照常启动。
 
 ## 架构
@@ -63,7 +66,7 @@ uvicorn app.main:app --reload
 # 打开 http://127.0.0.1:8000/docs 查看 Swagger
 ```
 
-完全不配置任何 API Key 也能启动：此时自动降级为「本地训练模型 + 内存向量库」，适合本地开发与体验。
+完全不配置任何 API Key 也能启动：全新克隆（无 `models/`）会自动降级为「规则分析器 + 哈希 TF-IDF 向量化 + 内存向量库」，适合本地开发与体验；训练过本地模型后（`training/` 流水线）即自动启用自训练模型。
 
 ## 7x24 自主循环（待命 + 巡检）
 
@@ -111,9 +114,11 @@ uvicorn app.main:app --reload
 - **公网入口**：Cloudflare 快速隧道（免注册），URL 记录在 `PUBLIC_URL.txt`，
   启动方式 `tools\cloudflared.exe tunnel --url http://localhost:8788`。
   快速隧道 URL 随隧道重启变化；需要固定域名可在 Cloudflare 注册账号创建命名隧道。
-- **生产加固**：随机生成的 SECRET_KEY / ADMIN_TOKEN（`.env`）、每 IP 限流 120 次/分、
+- **生产加固**：随机生成的 SECRET_KEY / ADMIN_TOKEN（`.env`）、限流 120 次/分、
   上传上限 10MB、日志落盘 `logs/agent.log`（10MB 轮转）、SQLite WAL 多进程共享、
   Chroma 向量持久化（`chroma_data/`，重启不丢向量）。
+  **隧道/反代部署必须设置 `TRUST_PROXY_HEADERS=true`**，否则所有公网用户共享
+  127.0.0.1 的同一个限流桶（仅信任回环来源的转发头，直连无法伪造）。
 - **开机自启**：`GitHubAgentAPI.bat` 已放入用户启动文件夹（无需管理员）。
 
 ## 反馈优化闭环
@@ -186,6 +191,8 @@ docker compose up --build  # PostgreSQL + 应用 + Chroma 持久化卷
 | GET | `/api/projects?limit=&offset=&language=` | 项目列表 |
 | POST | `/api/admin/trigger-fetch` | 手动触发一次检索（Header: `X-Admin-Token`） |
 | GET | `/api/admin/status` | 入库/分析/向量统计（需管理员 Header） |
+| GET | `/api/admin/digest?days=7` | 反馈闭环周报：高频/零结果查询、点赞点踩项目、新入库项目（需管理员 Header） |
+| POST | `/mcp` | **MCP 端点**（Model Context Protocol）：AI agent 通过 JSON-RPC 调用 `recommend_scenario` / `list_projects` / `get_project` 工具；`MCP_AUTH_TOKEN` 设置后需 Bearer 认证 |
 | GET | `/api/voice/status` | 语音组件可用性 |
 | POST | `/api/voice/ask` | 语音提问（multipart 音频）→ 文本 + 推荐 + 语音回答（base64 wav） |
 | POST | `/api/voice/transcribe` | 音频 → 文本 |
@@ -214,7 +221,7 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `GITHUB_MIN_STARS` | 100 | 最低星标过滤 |
 | `LLM_PROVIDER` | `openai` | `trained`（本地自训练模型，推荐）/ `openai` / `anthropic` / `local` / `rule` |
 | `TRAINED_MODEL_PATH` | `./models/repo-analyzer` | 自训练模型目录（存在即自动启用） |
-| `LLM_FALLBACK_PROVIDERS` | `["local","rule"]` | 主模型失败后的降级顺序 |
+| `LLM_FALLBACK_PROVIDERS` | `["trained","local","rule"]` | 主模型失败后的降级顺序（代码默认；`.env.example` 推荐配置为 `["rule"]`） |
 | `EMBEDDER_PROVIDER` | `sentence_transformers` | `trained`（自训练 encoder，推荐）/ `sentence_transformers` / `openai` / `tfidf` |
 | `ASR_PROVIDER` / `TTS_PROVIDER` | `faster_whisper` / `sherpa_onnx` | 语音识别/合成，`none` 禁用；模型见 `training/download_speech_models.py` |
 | `VECTOR_STORE_BACKEND` | `chroma` | `chroma` / `memory` |
@@ -228,7 +235,7 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 
 | 环节 | 首选 | 降级 1 | 降级 2（兜底） |
 | --- | --- | --- | --- |
-| LLM 分析 | 自训练模型（离线、零成本） | OpenAI / Anthropic / 本地小模型 | 规则分析器（关键词映射，永不失败） |
+| LLM 分析 | 代码默认 OpenAI / Anthropic（`.env.example` 推荐 `trained`，离线零成本） | trained → local 依次补位 | 规则分析器（关键词映射，永不失败） |
 | 向量化 | 自训练 encoder / sentence-transformers（本地） | OpenAI Embedding | 纯 Python 哈希 TF-IDF（零依赖） |
 | 语音识别/合成 | faster-whisper small / Melo-TTS（离线，CPU） | — | 接口返回 503 并提示（文本接口不受影响） |
 | 向量库 | Chroma（持久化） | — | 内存向量库（重启丢失，需重建索引） |

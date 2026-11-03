@@ -102,6 +102,17 @@ def admin_status(
     )
 
 
+@router.get("/digest", response_model=None)
+def weekly_digest(
+    request: Request, days: int = 7, _svc: ServiceContainer = Depends(get_services)
+):
+    """Rolling-window digest of the feedback optimization loop: top/zero-result
+    queries, voted projects and newly indexed repos. This is the input for
+    keyword expansion and the raw material for a weekly content channel."""
+    services = request.app.state.services
+    return services.digest.build(days=days)
+
+
 @router.get("/feedback", response_model=None)
 def feedback_report(request: Request, limit: int = 50, _svc: ServiceContainer = Depends(get_services)):
     """Aggregated external-user feedback: the input for the optimization loop."""

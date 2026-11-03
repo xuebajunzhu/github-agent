@@ -24,7 +24,7 @@ from app.services.github_service import (
 )
 from app.utils.filelock import job_lock
 from app.utils.timeutil import utcnow
-from app.vectorstore.base import VectorStore
+from app.vectorstore.base import VectorStore, upsert_batch_safe
 
 
 @dataclass
@@ -323,22 +323,37 @@ class IngestService:
             .limit(self._settings.github_max_analyze_per_run)
             .all()
         )
-        for project in to_embed:
-            try:
-                text = build_project_text(project)
-                vector = self._embedding.embed(text)
-                embedding_id = project_embedding_id(project.id)
-                self._vectors.upsert(
-                    [embedding_id],
-                    [vector],
-                    [text],
-                    [{"github_id": project.github_id, "full_name": project.full_name}],
-                )
+        if not to_embed:
+            return
+        # one batched forward pass + one batched upsert instead of N round
+        # trips (~3x CPU on the encoder, N-fold fewer vector-store calls)
+        texts = [build_project_text(project) for project in to_embed]
+        vectors = self._embedding.embed_batch_safe(texts)
+        usable = [
+            (project, text, vector)
+            for project, text, vector in zip(to_embed, texts, vectors)
+            if vector is not None
+        ]
+        if not usable:
+            return
+        ids = [project_embedding_id(project.id) for project, _, _ in usable]
+        ok = upsert_batch_safe(
+            self._vectors,
+            ids,
+            [vector for _, _, vector in usable],
+            [text for _, text, _ in usable],
+            [
+                {"github_id": project.github_id, "full_name": project.full_name}
+                for project, _, _ in usable
+            ],
+        )
+        for (project, _, _), embedding_id, succeeded in zip(usable, ids, ok):
+            if succeeded:
                 project.embedding_id = embedding_id
                 stats.embedded += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.error(f"Embedding failed for {project.full_name}: {exc}")
-            session.commit()
+            else:
+                logger.error(f"Embedding failed for {project.full_name}.")
+        session.commit()
 
 
 def _skipped_stats() -> dict:

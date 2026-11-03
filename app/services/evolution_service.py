@@ -120,6 +120,11 @@ class EvolutionService:
                     Project.topics,
                 )
                 .filter(Project.topics.isnot(None))
+                # newest first: freshly refreshed metadata carries more
+                # up-to-date signals, and the cap keeps memory bounded even
+                # after years of 24/7 crawling
+                .order_by(Project.id.desc())
+                .limit(self._settings.evolution_max_train_samples)
                 .all()
             )
         repos = []
@@ -396,6 +401,7 @@ class EvolutionService:
             return 0
         from app.models.project import Project
         from app.services.embedding_service import build_project_text, project_embedding_id
+        from app.vectorstore.base import upsert_batch_safe
 
         cap = self._settings.evolution_max_reembed
         reembedded = 0
@@ -407,24 +413,35 @@ class EvolutionService:
                 .limit(max(cap, 1))
                 .all()
             )
+            # batched forward pass + batched upsert (same rationale as ingest)
+            texts = [build_project_text(project) for project in projects]
+            vectors = self._embedding.embed_batch_safe(texts)
+            usable = [
+                (project, text, vector)
+                for project, text, vector in zip(projects, texts, vectors)
+                if vector is not None
+            ]
             rebuilt_ids: set[int] = set()
-            for project in projects:
-                try:
-                    text = build_project_text(project)
-                    vector = self._embedding.embed(text)
-                    embedding_id = project_embedding_id(project.id)
-                    self._vectors.upsert(
-                        [embedding_id],
-                        [vector],
-                        [text],
-                        [{"github_id": project.github_id, "full_name": project.full_name}],
-                    )
-                    project.embedding_id = embedding_id
-                    rebuilt_ids.add(project.id)
-                    reembedded += 1
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(f"Re-embed failed for {project.full_name}: {exc}")
-                    project.embedding_id = None  # patrol will finish it
+            if usable:
+                ids = [project_embedding_id(project.id) for project, _, _ in usable]
+                ok = upsert_batch_safe(
+                    self._vectors,
+                    ids,
+                    [vector for _, _, vector in usable],
+                    [text for _, text, _ in usable],
+                    [
+                        {"github_id": project.github_id, "full_name": project.full_name}
+                        for project, _, _ in usable
+                    ],
+                )
+                for (project, _, _), succeeded in zip(usable, ok):
+                    if succeeded:
+                        project.embedding_id = project_embedding_id(project.id)
+                        rebuilt_ids.add(project.id)
+                        reembedded += 1
+                    else:
+                        logger.error(f"Re-embed failed for {project.full_name}.")
+                        project.embedding_id = None  # patrol will finish it
             # Projects beyond the inline cap still hold stale-space vectors.
             # Park them (embedding_id=None) so patrol re-embeds them; patrol
             # only fills *missing* vectors, so leaving them in place would mix

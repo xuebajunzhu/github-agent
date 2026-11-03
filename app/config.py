@@ -119,6 +119,8 @@ class Settings(BaseSettings):
     patrol_requeue_failed: bool = True
     patrol_reconcile_vectors: bool = True
     patrol_reconcile_limit: int = 2000
+    # query_history only grows; patrol prunes rows older than this many days.
+    query_history_retention_days: int = 180
     # Parallel analysis threads (analysis is CPU/IO mixed; 1-4 sensible).
     analysis_workers: int = 2
 

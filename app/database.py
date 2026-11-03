@@ -52,6 +52,14 @@ def _add_missing_columns(engine: Engine) -> None:
             "license": "ALTER TABLE projects ADD COLUMN license VARCHAR(64)",
         },
     }
+    # indexes for the queries that grow with traffic (see admin feedback /
+    # digest aggregation and the language/star filtered listing)
+    indexes: tuple[str, ...] = (
+        "CREATE INDEX IF NOT EXISTS ix_query_history_created_at ON query_history (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_feedback_created_at ON feedback (created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_projects_language ON projects (language)",
+        "CREATE INDEX IF NOT EXISTS ix_projects_stars ON projects (stars)",
+    )
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     with engine.begin() as conn:
@@ -62,3 +70,7 @@ def _add_missing_columns(engine: Engine) -> None:
             for column_name, ddl in columns.items():
                 if column_name not in present:
                     conn.execute(text(ddl))
+        for ddl in indexes:
+            table = ddl.split(" ON ")[1].split(" ")[0]
+            if table in existing_tables:
+                conn.execute(text(ddl))

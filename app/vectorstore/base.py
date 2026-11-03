@@ -53,3 +53,31 @@ class VectorStore(ABC):
         embedding spaces silently corrupts similarity search).
         """
         return False
+
+
+def upsert_batch_safe(
+    store: VectorStore,
+    ids: list[str],
+    embeddings: list[list[float]],
+    documents: list[str] | None = None,
+    metadatas: list[dict] | None = None,
+) -> list[bool]:
+    """Upsert a batch in one call, degrading to per-item on failure so one bad
+    vector cannot void its siblings. Returns per-item success flags."""
+    try:
+        store.upsert(ids, embeddings, documents, metadatas)
+        return [True] * len(ids)
+    except Exception:  # noqa: BLE001
+        results: list[bool] = []
+        for position in range(len(ids)):
+            try:
+                store.upsert(
+                    [ids[position]],
+                    [embeddings[position]],
+                    [documents[position]] if documents else None,
+                    [metadatas[position]] if metadatas else None,
+                )
+                results.append(True)
+            except Exception:  # noqa: BLE001
+                results.append(False)
+        return results

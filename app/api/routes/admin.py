@@ -114,13 +114,23 @@ def weekly_digest(
 
 
 @router.get("/feedback", response_model=None)
-def feedback_report(request: Request, limit: int = 50, _svc: ServiceContainer = Depends(get_services)):
-    """Aggregated external-user feedback: the input for the optimization loop."""
+def feedback_report(
+    request: Request, limit: int = 50, days: int = 30, _svc: ServiceContainer = Depends(get_services)
+):
+    """Aggregated external-user feedback: the input for the optimization loop.
+
+    The GROUP BY aggregations are windowed (default 30 days) so they stay flat
+    as query_history grows instead of full-scanning an ever-larger table."""
     services = request.app.state.services
+    from datetime import timedelta
+
     from sqlalchemy import func
 
     from app.models.user import FeedbackRecord, QueryHistory
+    from app.utils.timeutil import utcnow
 
+    days = max(1, min(days, 365))
+    window_start = utcnow() - timedelta(days=days)
     with services.session_factory() as session:
         total = session.query(FeedbackRecord).count()
         up = session.query(FeedbackRecord).filter(FeedbackRecord.vote == "up").count()
@@ -130,7 +140,11 @@ def feedback_report(request: Request, limit: int = 50, _svc: ServiceContainer = 
                 FeedbackRecord.project_full_name,
                 func.count(FeedbackRecord.id).label("votes"),
             )
-            .filter(FeedbackRecord.vote == "down", FeedbackRecord.project_full_name.isnot(None))
+            .filter(
+                FeedbackRecord.created_at >= window_start,
+                FeedbackRecord.vote == "down",
+                FeedbackRecord.project_full_name.isnot(None),
+            )
             .group_by(FeedbackRecord.project_full_name)
             .order_by(func.count(FeedbackRecord.id).desc())
             .limit(20)
@@ -138,6 +152,7 @@ def feedback_report(request: Request, limit: int = 50, _svc: ServiceContainer = 
         )
         top_queries = (
             session.query(QueryHistory.query, func.count(QueryHistory.id).label("uses"))
+            .filter(QueryHistory.created_at >= window_start)
             .group_by(QueryHistory.query)
             .order_by(func.count(QueryHistory.id).desc())
             .limit(20)
@@ -145,7 +160,7 @@ def feedback_report(request: Request, limit: int = 50, _svc: ServiceContainer = 
         )
         zero_result = (
             session.query(QueryHistory.query)
-            .filter(QueryHistory.result_count == 0)
+            .filter(QueryHistory.created_at >= window_start, QueryHistory.result_count == 0)
             .order_by(QueryHistory.created_at.desc())
             .limit(limit)
             .all()

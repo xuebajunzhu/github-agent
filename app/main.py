@@ -81,6 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             RateLimitMiddleware,
             max_per_minute=settings.rate_limit_per_minute,
             trust_proxy_headers=settings.trust_proxy_headers,
+            redis_url=settings.redis_url,
         )
 
     for router in all_routers:

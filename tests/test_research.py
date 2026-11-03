@@ -135,11 +135,11 @@ def test_research_uses_cache_on_second_call(tmp_path):
     llm = FakeChatAnalyzer()
     service = make_service(tmp_path, FakeGitHub([make_repo(1, "acme/lf", 100)]), llm)
 
-    first = service.research("terminal file manager")
+    first = service.research("cache hit terminal manager")
     assert first["cached"] is False
     calls_after_first = llm.calls
 
-    second = service.research("Terminal File Manager ")  # same after normalize
+    second = service.research("Cache Hit Terminal Manager ")  # same after normalize
     assert second["cached"] is True
     assert llm.calls == calls_after_first, "cache hit must not spend LLM calls"
     assert second["direct"][0]["full_name"] == "acme/lf"
@@ -149,22 +149,25 @@ def test_research_cache_expires(tmp_path):
     llm = FakeChatAnalyzer()
     service = make_service(tmp_path, FakeGitHub([make_repo(1, "acme/lf", 100)]), llm)
 
-    service.research("terminal file manager")
+    problem = "cache expiry terminal manager"
+    service.research(problem)
     calls_after_first = llm.calls
 
     with service._session_factory() as session:
         row = session.query(ResearchCache).one()
         row.created_at = utcnow() - timedelta(hours=25)
         session.commit()
+    # the hot layer shares the DB TTL; clear it to prove the DB layer expires
+    service._hot_cache.delete(f"research:{service._hash(problem)}")
 
-    result = service.research("terminal file manager")
+    result = service.research(problem)
     assert result["cached"] is False
     assert llm.calls > calls_after_first
 
 
 def test_research_survives_rate_limit(tmp_path):
     service = make_service(tmp_path, FakeGitHub([], rate_limited=True))
-    result = service.research("terminal file manager")
+    result = service.research("rate limit survives monitoring problem")
     assert result["direct"] == [] and result["alternatives"] == []
 
 
@@ -176,7 +179,7 @@ def test_unclassified_batch_defaults_to_alternative(tmp_path):
             return super().chat(system, user)
 
     service = make_service(tmp_path, FakeGitHub([make_repo(1, "acme/lf", 100)]), BadClassifier())
-    result = service.research("terminal file manager")
+    result = service.research("bad classifier unclassified problem")
     # classified batch was unparseable: items survive as alternatives, nothing vanishes
     assert result["direct"] == []
     assert len(result["alternatives"]) == 1

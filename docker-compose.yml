@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -23,6 +35,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-github_agent}:${POSTGRES_PASSWORD:-github_agent}@postgres:5432/github_agent
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       # OAuth callback must be a URL GitHub can reach; 127.0.0.1 only works
       # when you also publish the app publicly and register that URL.
       GITHUB_REDIRECT_URI: http://127.0.0.1:8000/auth/github/callback
@@ -45,3 +58,4 @@ volumes:
   pgdata:
   chroma_data:
   app_logs:
+  redis_data:

@@ -251,6 +251,7 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `BGE_M3_MODEL_NAME` | `BAAI/bge-m3` | BGE-M3 模型名；首次使用自动下载 ~2.3GB（尊重 `HF_ENDPOINT` 镜像），换嵌入模型会自动清库并重建索引（`scripts/reindex_vectors.py` 可一次性重建） |
 | `ASR_PROVIDER` / `TTS_PROVIDER` | `faster_whisper` / `sherpa_onnx` | 语音识别/合成，`none` 禁用；模型见 `training/download_speech_models.py` |
 | `VECTOR_STORE_BACKEND` | `chroma` | `chroma` / `memory` |
+| `REDIS_URL` | 空 | **可选 Redis**：留空时限流/作业锁/研究缓存全部用进程内默认实现（零额外服务）；设置后变为跨进程共享且重启不丢（多 worker/多机部署启用，compose 已内置 redis 服务） |
 | `SCHEDULER_ENABLED` | `true` | 设为 `false` 可禁用定时任务（如仅做 API 服务） |
 | `FETCH_INTERVAL_MINUTES` | 1440 | 检索周期（分钟） |
 | `ENABLE_LLM_RERANK` | `false` | 推荐结果重排开关（llm 约 +1s、laya 约 +0.2s 延迟） |

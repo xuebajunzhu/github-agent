@@ -70,6 +70,11 @@ class Settings(BaseSettings):
 
     # -- Security --
     fernet_key: Optional[str] = None  # Fernet key for encrypting stored GitHub tokens
+    # Optional Redis (REDIS_URL, e.g. redis://localhost:6379/0). When empty,
+    # every piece of infrastructure runs on in-process defaults (rate limiter,
+    # job locks, caches) with zero extra services; when set, they become
+    # shared across processes and survive restarts.
+    redis_url: Optional[str] = None
     # Optional bearer token protecting the MCP endpoint (/mcp). Unset = open
     # (rate-limited); set it before exposing MCP publicly.
     mcp_auth_token: Optional[str] = None

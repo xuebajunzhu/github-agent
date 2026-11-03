@@ -24,6 +24,7 @@ from loguru import logger
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
+from app.infra import get_cache
 from app.llm.base import AnalysisError, extract_json
 from app.models.project import Project
 from app.models.research import ResearchCache
@@ -83,6 +84,9 @@ class ResearchService:
         self._analysis = analysis
         self._embedding = embedding
         self._vectors = vectors
+        # L1 cache: Redis when REDIS_URL is set (cross-process, restart-safe),
+        # in-memory otherwise; the research_cache table stays the durable layer
+        self._hot_cache = get_cache(settings)
 
     # ------------------------------------------------------------------ main
 
@@ -314,6 +318,11 @@ class ResearchService:
         return hashlib.sha256(problem.strip().lower().encode("utf-8")).hexdigest()
 
     def _cache_get(self, problem: str) -> dict | None:
+        key = f"research:{self._hash(problem)}"
+        hot = self._hot_cache.get(key)
+        if hot is not None:
+            hot["cached"] = True
+            return hot
         ttl = self._settings.research_cache_hours
         try:
             with self._session_factory() as session:
@@ -335,6 +344,11 @@ class ResearchService:
             return None
 
     def _cache_put(self, problem: str, response: dict) -> None:
+        self._hot_cache.put(
+            f"research:{self._hash(problem)}",
+            response,
+            max(1, self._settings.research_cache_hours) * 3600,
+        )
         try:
             with self._session_factory() as session:
                 row = (

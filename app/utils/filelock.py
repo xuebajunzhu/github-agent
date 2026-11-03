@@ -1,10 +1,10 @@
-"""Cross-process advisory file lock for the 24/7 job loops.
+"""Cross-process job locks: file-based default, Redis when REDIS_URL is set.
 
-SQLite (WAL) serializes the data itself, but the fetch / refresh / patrol /
-evolution jobs must not run concurrently across the API process and the worker
-process: they would double-analyze the same pending queue and race the model
-swap directory. An OS-level lock on a lock file makes every job exclusive
-across processes *and* threads (each acquire opens its own file descriptor).
+File locks (msvcrt/flock) are the zero-dependency default and work across
+processes AND threads on one box. When REDIS_URL is configured, a Redis
+SET NX PX lock takes over instead -- that is what makes the job mutex work
+across multiple machines, and it survives neither-needed-file-systems
+semantics on containerized deployments.
 """
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+
+from loguru import logger
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCK_DIR = ROOT / "logs"
@@ -58,14 +60,58 @@ class ProcessFileLock:
             self._fd = None
 
 
+class RedisLock:
+    """SET NX PX based mutual exclusion (multi-box safe); auto-expires so a
+    crashed holder cannot deadlock the pipeline forever."""
+
+    def __init__(self, redis_url: str, name: str, ttl_seconds: int = 3600):
+        import redis
+
+        self._client = redis.Redis.from_url(redis_url)
+        self._key = f"github-agent:lock:{name}"
+        self._ttl = ttl_seconds
+        self._token = f"{os.getpid()}-{id(self)}"
+
+    def acquire(self) -> bool:
+        try:
+            return bool(self._client.set(self._key, self._token, nx=True, px=self._ttl * 1000))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Redis lock unavailable ({exc}); falling back to file lock.")
+            self._client = None
+            return ProcessFileLock(LOCK_DIR / "redis-fallback.lock").acquire()
+
+    def release(self) -> None:
+        if getattr(self, "_client", None) is None:
+            return
+        try:
+            self._client.delete(self._key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Redis lock release failed: {exc}")
+
+
+def _redis_url() -> str | None:
+    try:
+        from app.config import get_settings
+
+        return get_settings().redis_url
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @contextmanager
 def job_lock(name: str = "pipeline") -> Iterator[bool]:
     """Serialize a scheduled/manual job.
 
     Yields True when the lock was acquired (run the job), False when another
     pipeline job is already running (skip; the scheduler will come back).
+    Uses Redis when REDIS_URL is configured, else an OS file lock.
     """
-    lock = ProcessFileLock(LOCK_DIR / f"{name}.lock")
+    url = _redis_url()
+    lock: ProcessFileLock | RedisLock
+    if url:
+        lock = RedisLock(url, name)
+    else:
+        lock = ProcessFileLock(LOCK_DIR / f"{name}.lock")
     acquired = lock.acquire()
     try:
         yield acquired

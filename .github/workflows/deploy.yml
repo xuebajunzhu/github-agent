@@ -24,13 +24,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      ADMIN_TOKEN: ${{ secrets.DEPLOY_ADMIN_TOKEN || 'deploy-admin-token' }}
-      SECRET_KEY: deploy-secret-key-not-for-production
+      ADMIN_TOKEN: ${{ secrets.DEPLOY_ADMIN_TOKEN }}
       ASR_PROVIDER: none
       TTS_PROVIDER: none
       RATE_LIMIT_PER_MINUTE: "600"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Verify required secrets
+        run: |
+          if [ -z "$ADMIN_TOKEN" ]; then
+            echo "::error::DEPLOY_ADMIN_TOKEN is not configured; refusing to expose a public instance with a predictable admin token. Set it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
@@ -63,6 +68,8 @@ jobs:
 
       - name: Start agent
         run: |
+          # fresh random key per deploy: the instance is ephemeral and public
+          export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')
           nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 8788 > server.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8788/health && break

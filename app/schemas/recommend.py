@@ -8,7 +8,10 @@ from app.schemas.project import ProjectOut
 
 
 class RecommendRequest(BaseModel):
-    query: str = Field(min_length=1, description="Natural language scenario description")
+    # bounded: the query gets embedded and stored in query_history forever
+    query: str = Field(
+        min_length=1, max_length=300, description="Natural language scenario description"
+    )
     top_k: int = Field(default=5, ge=1, le=50)
 
 

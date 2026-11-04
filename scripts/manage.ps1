@@ -58,12 +58,20 @@ function Start-Api {
             Write-Host "[WARN] .env still contains default secrets - rotate them before public exposure."
         }
     }
-    # preloaded models keep the first request from paying model load
-    $env:TRUST_PROXY_HEADERS = "true"
-    Start-Process -FilePath $Py `
-        -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "$Port" `
-        -WorkingDirectory $Root -WindowStyle Minimized
-    Write-Host "API process launched (loading models, this can take ~60s) ..."
+    # Spawn via WMI: a process created by Win32_Process.Create is NOT placed in
+    # the caller's job object. This matters because the watchdog is a scheduled
+    # task -- Task Scheduler terminates a task's descendant processes when the
+    # task ends, which previously killed the API seconds after every
+    # watchdog-started launch (the 22:08/22:25/23:05/23:13 restart loop).
+    $bat = Join-Path $Root "scripts\start_api.bat"
+    $cmdLine = "cmd.exe /c `"`"$bat`"`""
+    $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+        -Arguments @{ CommandLine = $cmdLine; CurrentDirectory = $Root }
+    if ($result.ReturnValue -ne 0) {
+        Write-Host "[ERROR] WMI process creation failed with code $($result.ReturnValue)"
+        exit 1
+    }
+    Write-Host "API process launched via WMI (pid $($result.ProcessId), loading models ~60s) ..."
 }
 
 function Ensure-Tunnel {
@@ -72,9 +80,10 @@ function Ensure-Tunnel {
         $exe = Join-Path $Root "tools\cloudflared.exe"
         if (-not (Test-Path $exe)) { Write-Host "[WARN] tools\cloudflared.exe not found; tunnel skipped."; return }
         Write-Host "Starting cloudflared tunnel ..."
-        Start-Process -FilePath $exe -ArgumentList "tunnel", "--url", "http://localhost:$Port" `
-            -WorkingDirectory $Root -WindowStyle Hidden `
-            -RedirectStandardOutput $TunnelLog -RedirectStandardError $TunnelErr
+        # WMI spawn for the same break-away-from-job reason as Start-Api
+        $cmdLine = "cmd.exe /c `"`"$exe`"`" tunnel --url http://localhost:$Port > `"`"$TunnelLog`"`" 2> `"`"$TunnelErr`"`""
+        Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+            -Arguments @{ CommandLine = $cmdLine; CurrentDirectory = $Root } | Out-Null
         Start-Sleep -Seconds 10
     }
     $url = $null

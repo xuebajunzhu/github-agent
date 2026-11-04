@@ -59,6 +59,7 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
     github = GitHubService(settings)
     ingest = IngestService(settings, session_factory, github, analysis, embedding, vectors)
     recommend = RecommendService(settings, session_factory, embedding, vectors, analysis)
+    recommend.preload_reranker()  # warm local rerankers off the request path
     patrol = PatrolService(settings, session_factory, ingest, embedding, vectors)
     evolution = EvolutionService(settings, session_factory, embedding, vectors, analysis)
     return ServiceContainer(

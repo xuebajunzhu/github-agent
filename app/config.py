@@ -100,9 +100,12 @@ class Settings(BaseSettings):
     enable_llm_rerank: bool = False
     # Which reranker to use when enable_llm_rerank is on:
     #   llm  = the primary analyzer (e.g. DeepSeek) rewrites ranking + reason
+    #   bge  = local cross-encoder bge-reranker-v2-m3 (zero cost, offline,
+    #          strong relevance ordering, no natural-language reason)
     #   laya = local 421M decision model (zero cost, offline; weakly
     #          discriminative on this domain -- experimental)
-    rerank_provider: str = "llm"  # llm | laya
+    rerank_provider: str = "llm"  # llm | bge | laya
+    reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
 
     # -- Embedder --
     embedder_provider: str = "sentence_transformers"  # sentence_transformers | openai | trained | tfidf

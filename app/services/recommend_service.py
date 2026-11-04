@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import Settings
 from app.models.project import Project
 from app.models.user import QueryHistory
+from app.llm.bge_reranker import BgeReranker
 from app.llm.laya_reranker import LayaReranker
 from app.services.analysis_service import AnalysisService
 from app.services.embedding_service import EmbeddingService, parse_embedding_id
@@ -43,9 +44,19 @@ class RecommendService:
         self._vectors = vectors
         self._analysis = analysis
         self._laya: LayaReranker | None = None
+        self._bge_reranker: BgeReranker | None = None
         if settings.rerank_provider == "laya":
             self._laya = LayaReranker(settings)
-            self._laya.preload_async()  # warm the checkpoint off the request path
+        elif settings.rerank_provider == "bge":
+            self._bge_reranker = BgeReranker(settings)
+
+    def preload_reranker(self) -> None:
+        """Warm the configured local reranker in the background (called by the
+        container, never in unit tests -- it loads real model weights)."""
+        if self._laya is not None:
+            self._laya.preload_async()
+        elif self._bge_reranker is not None:
+            self._bge_reranker.preload_async()
 
     def recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
         query_vector = self._embedding.embed(query)
@@ -88,13 +99,37 @@ class RecommendService:
         results = results[:top_k]
 
         if self._settings.enable_llm_rerank and results:
-            if self._laya is not None:
-                results = self._rerank_laya(query, results)
+            if self._bge_reranker is not None:
+                results = self._rerank_local(self._bge_reranker, query, results)
+            elif self._laya is not None:
+                results = self._rerank_local(self._laya, query, results)
             else:
                 results = self._rerank(query, results)
 
         self._record_history(query, top_k, len(results))
         return results
+
+    def _rerank_local(
+        self, reranker, query: str, results: list[RecommendHit]
+    ) -> list[RecommendHit]:
+        """Shared path for local decision-head rerankers (bge / laya); falls
+        back to the LLM reranker when the local one is unusable."""
+        candidates = self._rerank_candidates(results)
+        try:
+            outcome = reranker.rank_candidates(query, candidates)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Local rerank '{reranker.name}' failed: {exc}")
+            outcome = None
+        if outcome is not None:
+            reordered = self._apply_ranking(outcome[0], outcome[1], results)
+            if reordered is not None:
+                return reordered
+        logger.info(f"Local rerank '{reranker.name}' unusable; falling back to the LLM reranker.")
+        return self._rerank(query, results)
+
+    def _rerank_laya(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
+        assert self._laya is not None
+        return self._rerank_local(self._laya, query, results)
 
     @staticmethod
     def _apply_ranking(
@@ -113,22 +148,6 @@ class RecommendService:
         if reason and reordered:
             reordered[0].reason = reason
         return reordered
-
-    def _rerank_laya(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
-        """Local Laya rerank; falls back to the LLM reranker when unavailable."""
-        assert self._laya is not None
-        candidates = self._rerank_candidates(results)
-        try:
-            outcome = self._laya.rank_candidates(query, candidates)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Laya rerank failed: {exc}")
-            outcome = None
-        if outcome is not None:
-            reordered = self._apply_ranking(outcome[0], outcome[1], results)
-            if reordered is not None:
-                return reordered
-        logger.info("Laya rerank unusable; falling back to the LLM reranker.")
-        return self._rerank(query, results)
 
     @staticmethod
     def _rerank_candidates(results: list[RecommendHit]) -> list[dict]:

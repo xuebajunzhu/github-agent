@@ -6,33 +6,19 @@ normalization. Deterministic and instant, but quality is below real embedding
 models -- enable it explicitly via EMBEDDER_PROVIDER=tfidf when no better
 option is available.
 
-Chinese text has no spaces, so CJK runs are split into character bigrams:
-without this a whole Chinese sentence collapses into a single bucket and the
-fallback path returns near-random recommendations for the project's primary
-query language.
+Chinese text has no spaces, so CJK runs are split into character bigrams
+(see app.utils.tokenize): without this a whole Chinese sentence collapses
+into a single bucket and the fallback path returns near-random recommendations
+for the project's primary query language.
 """
 from __future__ import annotations
 
 import hashlib
 import math
-import re
 from collections import Counter
 
 from app.embedders.base import Embedder
-
-_LATIN_RE = re.compile(r"[a-z0-9]+")
-_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
-
-
-def _tokenize(text: str) -> list[str]:
-    tokens = _LATIN_RE.findall(text.lower())
-    for match in _CJK_RUN_RE.finditer(text):
-        run = match.group()
-        if len(run) == 1:
-            tokens.append(run)
-        else:
-            tokens.extend(a + b for a, b in zip(run, run[1:]))
-    return tokens
+from app.utils.tokenize import tokenize as _tokenize  # noqa: F401  # re-exported
 
 
 class HashingTfidfEmbedder(Embedder):

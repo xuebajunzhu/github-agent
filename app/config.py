@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     #          discriminative on this domain -- experimental)
     rerank_provider: str = "llm"  # llm | bge | laya
     reranker_model_name: str = "BAAI/bge-reranker-v2-m3"
+    # Hybrid retrieval: fuse dense (BGE-M3) ranking with a BM25 lexical
+    # ranking via Reciprocal Rank Fusion -- exact keyword hits that embeddings
+    # blur get pulled back in. Zero extra dependencies.
+    hybrid_retrieval: bool = True
 
     # -- Embedder --
     embedder_provider: str = "sentence_transformers"  # sentence_transformers | openai | trained | tfidf

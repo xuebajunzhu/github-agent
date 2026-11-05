@@ -1,18 +1,21 @@
 """Recommendation service: semantic search over embedded projects."""
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 
 from loguru import logger
+from sqlalchemy import func
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
-from app.models.project import Project
-from app.models.user import QueryHistory
 from app.llm.bge_reranker import BgeReranker
 from app.llm.laya_reranker import LayaReranker
+from app.models.project import Project
+from app.models.user import QueryHistory
 from app.services.analysis_service import AnalysisService
-from app.services.embedding_service import EmbeddingService, parse_embedding_id
+from app.services.bm25 import BM25Index
+from app.services.embedding_service import EmbeddingService, build_project_text, parse_embedding_id
 from app.utils.timeutil import maintenance_decay
 from app.vectorstore.base import VectorStore, VectorStoreError
 
@@ -49,6 +52,50 @@ class RecommendService:
             self._laya = LayaReranker(settings)
         elif settings.rerank_provider == "bge":
             self._bge_reranker = BgeReranker(settings)
+        # hybrid retrieval: BM25 over the done+embedded corpus, lazily built
+        # and rebuilt only when that population changes
+        self._bm25: BM25Index | None = None
+        self._bm25_signature: tuple[int, str] | None = None
+        self._bm25_lock = threading.Lock()
+
+    def _get_bm25_index(self) -> BM25Index | None:
+        with self._session_factory() as session:
+            count, last_updated = (
+                session.query(func.count(Project.id), func.max(Project.updated_at))
+                .filter(Project.analysis_status == "done", Project.embedding_id.isnot(None))
+                .one()
+            )
+        signature = (int(count or 0), str(last_updated))
+        with self._bm25_lock:
+            if self._bm25 is None or self._bm25_signature != signature:
+                with self._session_factory() as session:
+                    rows = (
+                        session.query(Project)
+                        .filter(Project.analysis_status == "done", Project.embedding_id.isnot(None))
+                        .order_by(Project.id)
+                        .all()
+                    )
+                if not rows:
+                    return None
+                self._bm25 = BM25Index(
+                    [row.id for row in rows],
+                    [build_project_text(row) for row in rows],
+                )
+                self._bm25_signature = signature
+                logger.info(f"BM25 index rebuilt: {len(rows)} documents.")
+        return self._bm25
+
+    @staticmethod
+    def _rrf_fuse(
+        dense_ranked: list[int], bm25_ranked: list[int], k: int = 60
+    ) -> tuple[list[int], dict[int, float]]:
+        """Reciprocal Rank Fusion of the dense and lexical rankings."""
+        scores: dict[int, float] = {}
+        for rank, project_id in enumerate(dense_ranked):
+            scores[project_id] = scores.get(project_id, 0.0) + 1.0 / (k + rank + 1)
+        for rank, project_id in enumerate(bm25_ranked):
+            scores[project_id] = scores.get(project_id, 0.0) + 1.0 / (k + rank + 1)
+        return sorted(scores, key=lambda pid: -scores[pid]), scores
 
     def preload_reranker(self) -> None:
         """Warm the configured local reranker in the background (called by the
@@ -61,17 +108,42 @@ class RecommendService:
     def recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
         query_vector = self._embedding.embed(query)
         try:
-            hits = self._vectors.query(query_vector, top_k=top_k)
+            fetch_k = top_k * 2 if self._settings.hybrid_retrieval else top_k
+            hits = self._vectors.query(query_vector, top_k=fetch_k)
         except VectorStoreError as exc:
             raise RecommendError(f"Vector search failed: {exc}") from exc
-        if not hits:
+
+        dense_ranked: list[int] = []
+        similarity_by_id: dict[int, float] = {}
+        for embedding_id, similarity in hits:
+            project_id = parse_embedding_id(embedding_id)
+            if project_id is not None:
+                dense_ranked.append(project_id)
+                similarity_by_id[project_id] = float(similarity)
+
+        # lexical channel: exact keyword hits that embeddings blur; fused with
+        # dense via Reciprocal Rank Fusion when enabled
+        bm25_ranked: list[int] = []
+        if self._settings.hybrid_retrieval:
+            try:
+                index = self._get_bm25_index()
+                if index is not None:
+                    bm25_ranked = [pid for pid, _ in index.search(query, top_k=fetch_k)]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"BM25 channel failed (dense-only this request): {exc}")
+
+        if bm25_ranked:
+            project_ids, fused_scores = self._rrf_fuse(dense_ranked, bm25_ranked)
+            # normalize fused RRF scores to a 0-1 display scale
+            max_fused = max(fused_scores.values()) or 1.0
+            score_by_id = {pid: fused_scores[pid] / max_fused for pid in project_ids}
+        else:
+            project_ids = dense_ranked
+            score_by_id = dict(similarity_by_id)
+
+        if not project_ids:
             return []
 
-        project_ids = [
-            project_id
-            for project_id in (parse_embedding_id(embedding_id) for embedding_id, _ in hits)
-            if project_id is not None
-        ]
         with self._session_factory() as session:
             projects = {
                 project.id: project
@@ -79,15 +151,14 @@ class RecommendService:
             }
 
         results: list[RecommendHit] = []
-        for embedding_id, similarity in hits:
-            project_id = parse_embedding_id(embedding_id)
-            project = projects.get(project_id) if project_id else None
+        for project_id in project_ids:
+            project = projects.get(project_id)
             if project is None:
                 continue
             results.append(
                 RecommendHit(
                     project=project,
-                    score=float(similarity),
+                    score=round(score_by_id.get(project_id, 0.0), 6),
                     dependencies=list(project.ai_dependencies or []),
                 )
             )

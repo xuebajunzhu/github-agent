@@ -53,12 +53,15 @@ def _add_missing_columns(engine: Engine) -> None:
         },
     }
     # indexes for the queries that grow with traffic (see admin feedback /
-    # digest aggregation and the language/star filtered listing)
-    indexes: tuple[str, ...] = (
-        "CREATE INDEX IF NOT EXISTS ix_query_history_created_at ON query_history (created_at)",
-        "CREATE INDEX IF NOT EXISTS ix_feedback_created_at ON feedback (created_at)",
-        "CREATE INDEX IF NOT EXISTS ix_projects_language ON projects (language)",
-        "CREATE INDEX IF NOT EXISTS ix_projects_stars ON projects (stars)",
+    # digest aggregation and the language/star filtered listing). Each entry
+    # is (index name, table, column): the column must exist in the legacy
+    # table or the index is skipped -- a missing column must never crash
+    # startup.
+    indexes: tuple[tuple[str, str, str], ...] = (
+        ("ix_query_history_created_at", "query_history", "created_at"),
+        ("ix_feedback_created_at", "feedback", "created_at"),
+        ("ix_projects_language", "projects", "language"),
+        ("ix_projects_stars", "projects", "stars"),
     )
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -70,7 +73,11 @@ def _add_missing_columns(engine: Engine) -> None:
             for column_name, ddl in columns.items():
                 if column_name not in present:
                     conn.execute(text(ddl))
-        for ddl in indexes:
-            table = ddl.split(" ON ")[1].split(" ")[0]
-            if table in existing_tables:
-                conn.execute(text(ddl))
+        for index_name, table, column in indexes:
+            if table not in existing_tables:
+                continue
+            present = {c["name"] for c in inspector.get_columns(table)}
+            if column in present:
+                conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({column})")
+                )

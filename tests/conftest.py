@@ -3,8 +3,17 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+import app.utils.filelock as filelock
 from app.config import Settings
 from app.main import create_app
+
+
+@pytest.fixture(autouse=True)
+def _isolated_lock_dir(tmp_path, monkeypatch):
+    """Tests must never touch the live deployment's pipeline lock file: two
+    concurrent pytest runs (or the running service) sharing logs/pipeline.lock
+    made every pipeline test flake with 'another pipeline job is running'."""
+    monkeypatch.setattr(filelock, "LOCK_DIR", tmp_path / "locks")
 
 
 @pytest.fixture()

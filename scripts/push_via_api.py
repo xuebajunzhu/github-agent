@@ -127,12 +127,25 @@ def main() -> None:
             sys.exit(1)
         new_sha = commit_resp.json()["sha"]
         if new_sha != commit_sha:
+            # The API cannot always reproduce a local commit's exact bytes
+            # (committer timezone/encoding details), so the SHA may differ even
+            # when the CONTENT is identical. Guard on the tree instead: same
+            # tree = same files. Adopt the API SHA locally afterwards (reset),
+            # otherwise history would diverge.
+            local_tree = git("rev-parse", f"{commit_sha}^{{tree}}")
+            api_tree = commit_resp.json()["tree"]["sha"]
+            if api_tree != local_tree:
+                print(
+                    f"ABORT: API tree {api_tree[:12]} != local tree {local_tree[:12]} "
+                    "(content divergence -- refusing to update the ref)"
+                )
+                sys.exit(1)
             print(
-                f"ABORT: API commit {new_sha[:12]} != local {commit_sha[:12]} "
-                "(refusing divergent history)"
+                f"    -> {new_sha[:12]} (content-identical; local SHA {commit_sha[:12]} "
+                "renamed by the API)"
             )
-            sys.exit(1)
-        print(f"    -> {new_sha[:12]} (byte-identical to local)")
+        else:
+            print(f"    -> {new_sha[:12]} (byte-identical to local)")
         api_parent = new_sha
         if diagnose:
             created = client.get(f"/git/commits/{new_sha}").json()

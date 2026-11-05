@@ -6,4 +6,4 @@ transformers>=4.40
 torch>=2.2
 
 # Laya decision model (experimental local reranker; needs torch)
-laya>=0.4
+laya>=0.4.21

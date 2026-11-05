@@ -1,9 +1,11 @@
 """Ingest pipeline: fetch -> upsert -> analyze -> embed, per the design doc data flow."""
 from __future__ import annotations
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
@@ -113,7 +115,15 @@ class IngestService:
 
     def _next_keyword_slice(self) -> list[str]:
         all_keywords = list(self._settings.github_search_keywords)
-        per_fetch = self._settings.keywords_per_fetch
+        dynamic = self._dynamic_keywords()
+        if dynamic:
+            # feedback loop: zero-result queries (expanded by the GapScout
+            # job into search keywords) ride along with every fetch
+            all_keywords = dynamic + all_keywords
+            per_fetch = self._settings.keywords_per_fetch
+            per_fetch = per_fetch + len(dynamic) if per_fetch > 0 else len(all_keywords)
+        else:
+            per_fetch = self._settings.keywords_per_fetch
         if per_fetch <= 0 or per_fetch >= len(all_keywords):
             return all_keywords
         with self._cursor_lock:
@@ -121,6 +131,27 @@ class IngestService:
             self._keyword_cursor = (start + per_fetch) % len(all_keywords)
         rotated = all_keywords[start:] + all_keywords[:start]
         return rotated[:per_fetch]
+
+    def _dynamic_keywords(self) -> list[str]:
+        """Read gap-scout-approved keywords (zero-result queries expanded by
+        the dedicated GapScout job, cached on disk). Cheap: file read only."""
+        limit = self._settings.dynamic_keyword_limit
+        if limit <= 0:
+            return []
+        cache_path = Path(self._settings.dynamic_keywords_file)
+        if not cache_path.exists():
+            return []
+        try:
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning(f"Could not read dynamic keywords: {exc}")
+            return []
+        keywords: list[str] = []
+        for expanded in cache.values():
+            for keyword in expanded:
+                if keyword and keyword not in keywords:
+                    keywords.append(keyword)
+        return keywords[:limit]
 
     def process_backlog(self) -> dict:
         """Patrol sweep: analyze pending projects, embed analyzed-but-unembedded ones."""

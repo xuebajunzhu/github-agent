@@ -2,8 +2,10 @@
 
 Each patrol run:
   1. requeues failed analyses for retry (optional),
-  2. processes the analysis/embedding backlog,
-  3. reconciles vector-store drift (e.g. after an in-memory store restart),
+  2. requeues heavily downvoted projects for re-analysis with the current,
+     improved pipeline (feedback -> quality loop),
+  3. processes the analysis/embedding backlog,
+  4. reconciles vector-store drift (e.g. after an in-memory store restart),
 so the pipeline never silently stalls, no matter what happened before.
 """
 from __future__ import annotations
@@ -11,9 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from loguru import logger
+from sqlalchemy import func
 
 from app.config import Settings
 from app.models.project import Project
+from app.models.user import FeedbackRecord
 from app.services.embedding_service import (
     EmbeddingService,
     build_project_text,
@@ -29,6 +33,7 @@ class PatrolReport:
     started_at: str
     finished_at: str = ""
     requeued_failed: int = 0
+    requeued_downvoted: int = 0
     analyzed: int = 0
     analysis_failed: int = 0
     embedded: int = 0
@@ -41,6 +46,7 @@ class PatrolReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "requeued_failed": self.requeued_failed,
+            "requeued_downvoted": self.requeued_downvoted,
             "analyzed": self.analyzed,
             "analysis_failed": self.analysis_failed,
             "embedded": self.embedded,
@@ -58,12 +64,14 @@ class PatrolService:
         ingest: IngestService,
         embedding: EmbeddingService,
         vectors: VectorStore,
+        notifier=None,
     ):
         self._settings = settings
         self._session_factory = session_factory
         self._ingest = ingest
         self._embedding = embedding
         self._vectors = vectors
+        self._notifier = notifier
         self.last_report: dict | None = None
         self.run_count = 0
 
@@ -77,6 +85,13 @@ class PatrolService:
             except Exception as exc:  # noqa: BLE001
                 report.errors.append(f"requeue_failed: {exc}")
                 logger.error(f"Patrol requeue failed: {exc}")
+
+        if getattr(self._settings, "patrol_requeue_downvote_threshold", 0) > 0:
+            try:
+                report.requeued_downvoted = self._requeue_downvoted()
+            except Exception as exc:  # noqa: BLE001
+                report.errors.append(f"requeue_downvoted: {exc}")
+                logger.error(f"Patrol downvote requeue failed: {exc}")
 
         try:
             backlog = self._ingest.process_backlog()
@@ -105,6 +120,7 @@ class PatrolService:
         if any(
             [
                 report.requeued_failed,
+                report.requeued_downvoted,
                 report.analyzed,
                 report.embedded,
                 report.reconciled_vectors,
@@ -114,25 +130,80 @@ class PatrolService:
             logger.info(f"Patrol #{self.run_count}: {self.last_report}")
         else:
             logger.debug(f"Patrol #{self.run_count}: nothing to do.")
+        if self._notifier is not None and report.errors:
+            self._notifier.send(
+                f"[github-agent] Patrol reported {len(report.errors)} error(s)",
+                "\n".join(report.errors),
+                key="patrol-errors",
+            )
         return self.last_report
+
+    def _requeue_downvoted(self) -> int:
+        """Feedback -> quality loop: projects rejected by several voters go
+        back into the analysis queue so the current (improved) pipeline —
+        e.g. with README content now enabled — takes another shot at them."""
+        threshold = self._settings.patrol_requeue_downvote_threshold
+        limit = self._settings.patrol_requeue_downvote_limit
+        with self._session_factory() as session:
+            downvote_counts = (
+                session.query(FeedbackRecord.project_id, func.count(FeedbackRecord.id))
+                .filter(FeedbackRecord.vote == "down", FeedbackRecord.project_id.isnot(None))
+                .group_by(FeedbackRecord.project_id)
+                .having(func.count(FeedbackRecord.id) >= threshold)
+                .limit(limit)
+                .all()
+            )
+            if not downvote_counts:
+                return 0
+            project_ids = [project_id for project_id, _ in downvote_counts]
+            requeued = (
+                session.query(Project)
+                .filter(
+                    Project.id.in_(project_ids),
+                    Project.analysis_status == "done",
+                )
+                .update(
+                    {"analysis_status": "pending", "embedding_id": None},
+                    synchronize_session=False,
+                )
+            )
+            session.commit()
+        if requeued:
+            logger.warning(
+                f"Requeued {requeued} downvoted projects for re-analysis "
+                f"(>= {threshold} downvotes)."
+            )
+        return int(requeued)
 
     def _prune_query_history(self) -> int:
         """query_history grows on every recommend; without a retention pass the
         admin aggregations (and the DB itself) degrade over months of 24/7 running."""
         from datetime import timedelta
 
+        from app.models.research import ResearchCache
         from app.models.user import QueryHistory
 
+        pruned = 0
         retention = self._settings.query_history_retention_days
-        if retention <= 0:
-            return 0
-        cutoff = utcnow() - timedelta(days=retention)
-        with self._session_factory() as session:
-            count = session.query(QueryHistory).filter(QueryHistory.created_at < cutoff).delete()
-            session.commit()
-        if count:
-            logger.info(f"Pruned {count} query-history rows older than {retention} days.")
-        return int(count)
+        if retention > 0:
+            cutoff = utcnow() - timedelta(days=retention)
+            with self._session_factory() as session:
+                pruned += session.query(QueryHistory).filter(QueryHistory.created_at < cutoff).delete()
+                session.commit()
+            if pruned:
+                logger.info(f"Pruned {pruned} query-history rows older than {retention} days.")
+        research_days = getattr(self._settings, "research_cache_retention_days", 7)
+        if research_days > 0:
+            cutoff = utcnow() - timedelta(days=research_days)
+            with self._session_factory() as session:
+                research_pruned = (
+                    session.query(ResearchCache).filter(ResearchCache.created_at < cutoff).delete()
+                )
+                session.commit()
+            if research_pruned:
+                logger.info(f"Pruned {research_pruned} expired research-cache rows.")
+            pruned += research_pruned
+        return pruned
 
     def reconcile_vectors(self, limit: int | None = None) -> int:
         """Re-embed projects whose vectors vanished from the store (drift)."""

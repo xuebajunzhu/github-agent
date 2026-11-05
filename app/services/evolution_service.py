@@ -73,12 +73,21 @@ class EvolutionReport:
 
 
 class EvolutionService:
-    def __init__(self, settings: Settings, session_factory, embedding, vectors, analysis):
+    def __init__(
+        self,
+        settings: Settings,
+        session_factory,
+        embedding,
+        vectors,
+        analysis,
+        notifier=None,
+    ):
         self._settings = settings
         self._session_factory = session_factory
         self._embedding = embedding
         self._vectors = vectors
         self._analysis = analysis
+        self._notifier = notifier
         self._swap_lock = MODEL_SWAP_LOCK
         self.last_report: dict | None = None
         self.run_count = 0
@@ -347,6 +356,22 @@ class EvolutionService:
         self.last_report = report.as_dict()
         self._save_history(self.last_report)
         logger.info(f"Evolution {report.outcome}: {report.reason or report.as_dict()}")
+        if self._notifier is not None:
+            if report.outcome == "promoted":
+                self._notifier.send(
+                    "[github-agent] New model promoted",
+                    f"golden F1 {report.challenger_f1} beats champion "
+                    f"{report.champion_f1}; data size {report.data_size}; "
+                    f"vectors re-embedded {report.reembedded}.",
+                    key="evolution-promoted",
+                    level="info",
+                )
+            elif report.outcome in ("failed", "repaired"):
+                self._notifier.send(
+                    f"[github-agent] Evolution {report.outcome}",
+                    report.reason or "; ".join(report.errors) or "unknown reason",
+                    key=f"evolution-{report.outcome}",
+                )
         return self.last_report
 
     def _promote(self, staging_dir: Path, challenger_metrics: dict, data_size: int, report: EvolutionReport) -> None:

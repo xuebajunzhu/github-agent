@@ -59,12 +59,37 @@ class SchedulerService:
                 max_instances=1,
                 coalesce=True,
             )
+        if settings.gap_scout_enabled:
+            self._scheduler.add_job(
+                self._run_gap_scout,
+                "interval",
+                minutes=settings.gap_scout_interval_minutes,
+                id="gap_scout",
+                name="Gap Scout: zero-result queries -> new index coverage",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.backup_enabled:
+            self._scheduler.add_job(
+                self._run_backup,
+                "cron",
+                hour=settings.backup_hour_utc,
+                minute=0,
+                id="nightly_backup",
+                name="Nightly backup: SQLite + chroma dir",
+                max_instances=1,
+                coalesce=True,
+            )
         self._scheduler.start()
         extras = []
         if settings.patrol_enabled:
             extras.append(f"patrol every {settings.patrol_interval_minutes} min")
         if settings.evolution_enabled:
             extras.append(f"evolution every {settings.evolution_interval_minutes} min")
+        if settings.gap_scout_enabled:
+            extras.append(f"gap-scout every {settings.gap_scout_interval_minutes} min")
+        if settings.backup_enabled:
+            extras.append(f"backup daily {settings.backup_hour_utc:02d}:00 UTC")
         extra_note = (", " + ", ".join(extras)) if extras else ""
         logger.info(
             f"Scheduler started: fetch every {settings.fetch_interval_minutes} min, "
@@ -94,6 +119,18 @@ class SchedulerService:
             await asyncio.to_thread(self._services.evolution.run_cycle)
         except Exception:  # noqa: BLE001
             logger.exception("Model evolution cycle failed")
+
+    async def _run_gap_scout(self) -> None:
+        try:
+            await asyncio.to_thread(self._services.gap_scout.run_scout)
+        except Exception:  # noqa: BLE001
+            logger.exception("Gap scout run failed")
+
+    async def _run_backup(self) -> None:
+        try:
+            await asyncio.to_thread(self._services.backup.run_backup)
+        except Exception:  # noqa: BLE001
+            logger.exception("Nightly backup failed")
 
     def shutdown(self) -> None:
         if self._scheduler.running:

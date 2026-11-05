@@ -10,6 +10,8 @@ venv/
 /models/
 /training/data/
 /tools/
+/backups/
+/dynamic_keywords.json
 /PUBLIC_URL.txt
 .pytest_cache/
 .coverage

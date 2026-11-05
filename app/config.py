@@ -111,6 +111,39 @@ class Settings(BaseSettings):
     # blur get pulled back in. Zero extra dependencies.
     hybrid_retrieval: bool = True
 
+    # -- Feedback loop (external votes actually change behavior) --
+    # Downvoted projects are multiplied by (1 - penalty * down_ratio), i.e. a
+    # project rejected by every voter loses at most this fraction of its
+    # score; upvoted projects gain up to `feedback_upvote_bonus`.
+    feedback_in_ranking: bool = True
+    feedback_penalty_weight: float = 0.25
+    feedback_upvote_bonus: float = 0.10
+    # Projects with >= threshold downvotes get re-analyzed by the patrol
+    # (fresh pipeline, e.g. after README fetching was enabled).
+    patrol_requeue_downvote_threshold: int = 2
+    patrol_requeue_downvote_limit: int = 10
+    # Recent zero-result queries are expanded into extra GitHub search
+    # keywords (via the primary LLM, done by the GapScout job) and joined
+    # into the rotating keyword list by the ingest pipeline.
+    dynamic_keyword_limit: int = 8
+    dynamic_keywords_file: str = "./dynamic_keywords.json"
+    gap_scout_enabled: bool = True
+    gap_scout_interval_minutes: int = 60
+    gap_scout_max_queries: int = 10
+
+    # -- Notifications (optional webhook on patrol/evolution failure, model
+    # promotion/rollback). Auto-detects WeCom bot / ServerChan / Telegram /
+    # generic JSON by URL. Empty = disabled.
+    notify_webhook_url: Optional[str] = None
+    notify_telegram_chat_id: Optional[str] = None
+    notify_cooldown_minutes: int = 30
+
+    # -- Backups (SQLite via the backup API + chroma dir tarball) --
+    backup_enabled: bool = True
+    backup_hour_utc: int = 19  # 03:00 Beijing time
+    backup_retention: int = 7
+    backup_dir: str = "./backups"
+
     # -- Embedder --
     embedder_provider: str = "sentence_transformers"  # sentence_transformers | openai | trained | tfidf
     embedder_fallback_providers: List[str] = Field(

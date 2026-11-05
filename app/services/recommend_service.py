@@ -12,7 +12,7 @@ from app.config import Settings
 from app.llm.bge_reranker import BgeReranker
 from app.llm.laya_reranker import LayaReranker
 from app.models.project import Project
-from app.models.user import QueryHistory
+from app.models.user import FeedbackRecord, QueryHistory
 from app.services.analysis_service import AnalysisService
 from app.services.bm25 import BM25Index
 from app.services.embedding_service import EmbeddingService, build_project_text, parse_embedding_id
@@ -57,6 +57,74 @@ class RecommendService:
         self._bm25: BM25Index | None = None
         self._bm25_signature: tuple[int, str] | None = None
         self._bm25_lock = threading.Lock()
+        # feedback weights: per-project up/down vote ratios, refreshed only
+        # when the feedback table changes
+        self._feedback_weights: dict[int, float] = {}
+        self._feedback_signature: tuple[int, str] | None = None
+        self._feedback_lock = threading.Lock()
+
+    def _get_feedback_weights(self) -> dict[int, float]:
+        """project_id -> score multiplier in [1-bonus^-1, 1+bonus]: downvotes
+        cut the score, upvotes lift it. Recomputed only when the feedback
+        table's row count / newest timestamp changes."""
+        with self._session_factory() as session:
+            count, last_time = (
+                session.query(func.count(FeedbackRecord.id), func.max(FeedbackRecord.created_at))
+                .one()
+            )
+        signature = (int(count or 0), str(last_time))
+        with self._feedback_lock:
+            if self._feedback_signature == signature:
+                return self._feedback_weights
+            rows = (
+                session.query(
+                    FeedbackRecord.project_id,
+                    FeedbackRecord.vote,
+                    func.count(FeedbackRecord.id),
+                )
+                .filter(FeedbackRecord.project_id.isnot(None))
+                .group_by(FeedbackRecord.project_id, FeedbackRecord.vote)
+                .all()
+            )
+            up: dict[int, int] = {}
+            down: dict[int, int] = {}
+            for project_id, vote, votes in rows:
+                bucket = up if vote == "up" else down
+                bucket[project_id] = bucket.get(project_id, 0) + int(votes)
+            weights: dict[int, float] = {}
+            for project_id in set(up) | set(down):
+                ups, downs = up.get(project_id, 0), down.get(project_id, 0)
+                total = ups + downs
+                if total == 0:
+                    continue
+                multiplier = 1.0
+                if downs:
+                    multiplier -= self._settings.feedback_penalty_weight * (downs / total)
+                if ups:
+                    multiplier += self._settings.feedback_upvote_bonus * (ups / total)
+                weights[project_id] = max(0.5, min(1.5, multiplier))
+            self._feedback_weights = weights
+            self._feedback_signature = signature
+            if weights:
+                logger.info(f"Feedback weights refreshed: {len(weights)} projects scored.")
+        return self._feedback_weights
+
+    def _apply_feedback(self, results: list[RecommendHit]) -> None:
+        if not results:
+            return
+        try:
+            weights = self._get_feedback_weights()
+        except Exception as exc:  # noqa: BLE001  # feedback must never break search
+            logger.warning(f"Feedback weights unavailable (skipped): {exc}")
+            return
+        adjusted = False
+        for hit in results:
+            multiplier = weights.get(hit.project.id)
+            if multiplier is not None and multiplier != 1.0:
+                hit.score = round(hit.score * multiplier, 6)
+                adjusted = True
+        if adjusted:
+            results.sort(key=lambda hit: hit.score, reverse=True)
 
     def _get_bm25_index(self) -> BM25Index | None:
         with self._session_factory() as session:
@@ -167,6 +235,11 @@ class RecommendService:
         for hit in results:
             hit.score = round(hit.score * maintenance_decay(hit.project.pushed_at), 6)
         results.sort(key=lambda hit: hit.score, reverse=True)
+
+        # external feedback: downvoted projects sink, upvoted ones rise
+        if self._settings.feedback_in_ranking:
+            self._apply_feedback(results)
+
         results = results[:top_k]
 
         if self._settings.enable_llm_rerank and results:

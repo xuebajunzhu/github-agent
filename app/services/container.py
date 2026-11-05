@@ -9,9 +9,11 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.services.analysis_service import AnalysisService
+from app.services.backup_service import BackupService
 from app.services.digest_service import DigestService
 from app.services.embedding_service import EmbeddingService
 from app.services.evolution_service import EvolutionService
+from app.services.gap_scout import GapScoutService
 from app.services.github_service import GitHubService
 from app.services.ingest_service import IngestService
 from app.services.patrol_service import PatrolService
@@ -20,6 +22,7 @@ from app.services.recommend_service import RecommendService
 from app.services.research_service import ResearchService
 from app.speech import SpeechToText, TextToSpeech, build_stt, build_tts
 from app.utils.crypto import TokenCipher
+from app.utils.notifier import Notifier
 from app.vectorstore.base import VectorStore
 
 
@@ -40,6 +43,9 @@ class ServiceContainer:
     digest: DigestService
     research: ResearchService
     prompt_evolution: PromptEvolutionService
+    gap_scout: GapScoutService
+    backup: BackupService
+    notifier: Notifier
     stt: SpeechToText | None = None
     tts: TextToSpeech | None = None
 
@@ -59,11 +65,12 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
     if vectors.ensure_space(embedding.space_id):
         _park_all_projects_for_reembed(session_factory)
     github = GitHubService(settings)
+    notifier = Notifier(settings)
     ingest = IngestService(settings, session_factory, github, analysis, embedding, vectors)
     recommend = RecommendService(settings, session_factory, embedding, vectors, analysis)
     recommend.preload_reranker()  # warm local rerankers off the request path
-    patrol = PatrolService(settings, session_factory, ingest, embedding, vectors)
-    evolution = EvolutionService(settings, session_factory, embedding, vectors, analysis)
+    patrol = PatrolService(settings, session_factory, ingest, embedding, vectors, notifier)
+    evolution = EvolutionService(settings, session_factory, embedding, vectors, analysis, notifier)
     return ServiceContainer(
         settings=settings,
         engine=engine,
@@ -82,6 +89,9 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
             settings, session_factory, github, analysis, embedding, vectors
         ),
         prompt_evolution=PromptEvolutionService(settings, session_factory, analysis),
+        gap_scout=GapScoutService(settings, session_factory, analysis, notifier),
+        backup=BackupService(settings),
+        notifier=notifier,
         stt=build_stt(settings),
         tts=build_tts(settings),
     )

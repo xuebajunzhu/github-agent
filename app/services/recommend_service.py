@@ -306,7 +306,7 @@ class RecommendService:
 
     def _rerank(self, query: str, results: list[RecommendHit]) -> list[RecommendHit]:
         candidates = self._rerank_candidates(results)
-        for analyzer in self._analysis.analyzers:
+        for analyzer in getattr(self._analysis, "analyzers", None) or []:
             if not analyzer.available():
                 continue
             try:

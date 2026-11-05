@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("torch")
+
 from app.config import Settings
 from app.llm.bge_reranker import BgeReranker
 from app.models.project import Project

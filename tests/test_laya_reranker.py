@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("torch")
+
 from app.config import Settings
 from app.llm.laya_reranker import LayaReranker
 from app.models.project import Project

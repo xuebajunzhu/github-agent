@@ -39,8 +39,11 @@ class Notifier:
             return False
         key = key or title
         now = time.monotonic()
-        last = self._last_sent.get(key, 0.0)
-        if now - last < self._cooldown_seconds:
+        last = self._last_sent.get(key)
+        # None = never sent for this key; defaulting to 0.0 would wrongly
+        # suppress everything for the first cooldown window after boot
+        # (time.monotonic() is near zero on a fresh process).
+        if last is not None and now - last < self._cooldown_seconds:
             logger.debug(f"Notification '{key}' suppressed by cooldown.")
             return False
 

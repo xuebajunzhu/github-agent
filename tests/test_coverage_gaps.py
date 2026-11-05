@@ -7,6 +7,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("chromadb")
 from fastapi import Request
 from starlette.datastructures import Headers
 

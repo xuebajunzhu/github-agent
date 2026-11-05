@@ -25,6 +25,7 @@ def git(*args: str) -> str:
 
 
 def main() -> None:
+    diagnose = "--diagnose" in sys.argv
     token = subprocess.run(
         [r"C:\Program Files\GitHub CLI\gh.exe", "auth", "token"],
         capture_output=True, text=True, check=True,
@@ -132,6 +133,17 @@ def main() -> None:
             sys.exit(1)
         print(f"    -> {new_sha[:12]} (byte-identical to local)")
         api_parent = new_sha
+        if diagnose:
+            created = client.get(f"/git/commits/{new_sha}").json()
+            local_raw = subprocess.run(
+                [r"C:\Program Files\Git\cmd\git.exe", "cat-file", "commit", commit_sha],
+                capture_output=True, text=True, check=True,
+            ).stdout
+            print("--- API object ---")
+            print(json.dumps({k: created[k] for k in ("tree", "author", "committer", "message")}, indent=2)[:800])
+            print("--- LOCAL object ---")
+            print(local_raw[:800])
+            sys.exit(2)
 
     update = client.patch("/git/refs/heads/main", json={"sha": api_parent, "force": False})
     update.raise_for_status()

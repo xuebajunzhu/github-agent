@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.api.middleware import RateLimitMiddleware
+from app.api.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.api.routes import all_routers
 from app.config import Settings
 from app.database import create_db_engine, init_db
@@ -83,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             trust_proxy_headers=settings.trust_proxy_headers,
             redis_url=settings.redis_url,
         )
+    app.add_middleware(SecurityHeadersMiddleware)
 
     for router in all_routers:
         app.include_router(router)

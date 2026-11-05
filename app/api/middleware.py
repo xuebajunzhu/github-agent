@@ -102,3 +102,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 headers={"Retry-After": "1"},
             )
         return await call_next(request)
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Defense-in-depth response headers for a public-facing service.
+
+    CSP pins every content origin to 'self' (the two HTML pages use inline
+    scripts/styles, hence 'unsafe-inline' for those directives only — no
+    external origin may load code or receive data). The remaining headers are
+    the standard hardening set for an API that also serves HTML."""
+
+    HEADERS = {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'"
+        ),
+    }
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for name, value in self.HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response

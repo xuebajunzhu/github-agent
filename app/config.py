@@ -136,6 +136,13 @@ class Settings(BaseSettings):
     gap_scout_interval_minutes: int = 60
     gap_scout_max_queries: int = 10
 
+    # Prompt evolution auto-cycle (loop D): disabled until a working LLM key
+    # is configured -- a daily failed cycle is noise, not self-optimization.
+    prompt_evolution_enabled: bool = False
+    prompt_evolution_interval_minutes: int = 1440
+    # research_cache table rows older than this are pruned by patrol.
+    research_cache_retention_days: int = 7
+
     # -- Notifications (optional webhook on patrol/evolution failure, model
     # promotion/rollback). Auto-detects WeCom bot / ServerChan / Telegram /
     # generic JSON by URL. Empty = disabled.

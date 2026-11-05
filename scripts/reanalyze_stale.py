@@ -89,6 +89,14 @@ def main() -> None:
         except GitHubAPIError as exc:
             logger.warning(f"Refresh failed for {project.full_name}: {exc}")
             refresh_failed += 1
+        # README backfill: these projects were fetched in the anonymous era
+        # (GITHUB_FETCH_README=false), so most have no readme_excerpt — but
+        # README text is part of the analysis input and the indexed text.
+        if not project.readme_excerpt and services.settings.github_fetch_readme:
+            try:
+                project.readme_excerpt = services.github.get_readme_excerpt(project.full_name)
+            except (GitHubRateLimitError, GitHubAPIError) as exc:
+                logger.warning(f"README fetch failed for {project.full_name}: {exc}")
         # always requeue: the point is regenerating the analysis with the new chain
         project.analysis_status = "pending"
         project.embedding_id = None

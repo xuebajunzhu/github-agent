@@ -185,7 +185,15 @@ curl -H "X-Admin-Token: $ADMIN_TOKEN" http://127.0.0.1:8788/api/admin/feedback
   （重量级用例在无模型/无 torch 的环境自动跳过）；
 - **夜间云端训练**（`.github/workflows/evolution.yml`）：每天 22:00 UTC 用 GitHub Actions
   的算力采集新数据 → 训练挑战者 → 金标准门禁 → 通过则把模型发布为 Release 资产
-  （`model-<run_id>` tag）；也可在 Actions 页面手动 dispatch；
+  （`model-<run_id>` tag）；也可在 Actions 页面手动 dispatch；积累的训练数据集同样
+  以 Release 资产（`dataset` tag）存储在仓库里，云端每轮先恢复再增补；
+- **GitHub 托管部署 + 远程集成测试**（`.github/workflows/deploy.yml`）：在 GitHub Actions
+  的机器上拉起完整服务（模型取自 Release 存储，无则现场训练一个过门禁的）→ Cloudflare
+  隧道暴露公网 → 对公网 URL 跑 `scripts/integration_test.py` 远程集成测试（11 项检查：
+  健康检查/训练模型生效/持久向量库/落地页/文档/真实检索入库/中英文推荐/反馈回环/语音状态）
+  → 实例保活一段时间供人试用后随 runner 销毁。**已验证：run 34044859618 全部 11/11 通过**
+  （实例 https://backing-stud-final-eliminate.trycloudflare.com，隧道随任务销毁）。
+  随时重新拉起：`gh workflow run deploy.yml -f keep_alive_minutes=30`；
 - **本地拉取晋升**（`scripts/pull_model_release.py`）：下载最新模型 Release，本地金丝雀 +
   金标准门禁仍会复检后才晋升上线——云端训练、本地把关；
 - **依赖锁定**：`requirements.lock` 是当前已验证环境的完整快照（`pip freeze`），

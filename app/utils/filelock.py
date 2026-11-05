@@ -62,9 +62,12 @@ class ProcessFileLock:
 
 class RedisLock:
     """SET NX PX based mutual exclusion (multi-box safe); auto-expires so a
-    crashed holder cannot deadlock the pipeline forever."""
+    crashed holder cannot deadlock the pipeline forever. The TTL must exceed
+    the longest job (model evolution trains for up to
+    EVOLUTION_TRAIN_TIMEOUT_SECONDS = 2h), otherwise a live holder expires
+    mid-job and a second job starts on top of it."""
 
-    def __init__(self, redis_url: str, name: str, ttl_seconds: int = 3600):
+    def __init__(self, redis_url: str, name: str, ttl_seconds: int = 4 * 3600):
         import redis
 
         self._client = redis.Redis.from_url(redis_url)

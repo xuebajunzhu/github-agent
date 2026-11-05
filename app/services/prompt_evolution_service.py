@@ -107,10 +107,22 @@ class PromptEvolutionService:
         self._analysis = analysis
         self.last_report: dict | None = None
         self.run_count = 0
+        self._cycle_lock = threading.Lock()
 
     # ------------------------------------------------------------------ main
 
     def run_cycle(self, max_cases: int | None = None) -> dict:
+        # reentry guard: two concurrent cycles would double-spend LLM calls and
+        # race the prompt promotion (scheduler tick + admin trigger)
+        if not self._cycle_lock.acquire(blocking=False):
+            logger.warning("Prompt evolution skipped: another cycle is already running.")
+            return {"outcome": "skipped", "reason": "another cycle is already running"}
+        try:
+            return self._run_cycle(max_cases)
+        finally:
+            self._cycle_lock.release()
+
+    def _run_cycle(self, max_cases: int | None) -> dict:
         report = PromptEvolutionReport(started_at=utcnow().isoformat())
         self.run_count += 1
         try:

@@ -276,7 +276,7 @@ curl -X POST http://127.0.0.1:8000/api/admin/trigger-fetch \
 | `SCHEDULER_ENABLED` | `true` | 设为 `false` 可禁用定时任务（如仅做 API 服务） |
 | `FETCH_INTERVAL_MINUTES` | 1440 | 检索周期（分钟） |
 | `ENABLE_LLM_RERANK` | `false` | 推荐结果重排开关（llm 约 +1s、laya 约 +0.2s 延迟） |
-| `RERANK_PROVIDER` | `llm` | `bge`（本地 cross-encoder bge-reranker-v2-m3，BGE-M3 官方配套，零成本离线，推荐）/ `llm`（主分析器重排，生成推荐理由）/ `laya`（实验性，实测区分度弱） |
+| `RERANK_PROVIDER` | `llm` | 本地重排器（`bge`/`laya`）经 `scripts/eval_ranking.py` 实测为**负收益**（P@3 持平、MRR 下降、延迟 8.7×），建议保持 `ENABLE_LLM_RERANK=false` 用融合排序；`llm` 模式可生成推荐理由（+3s） |
 
 完整配置见 `.env.example`，全部支持环境变量或 `.env` 文件注入。
 

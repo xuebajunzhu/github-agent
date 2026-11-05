@@ -56,7 +56,7 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
     from app.vectorstore import create_vector_store
 
     session_factory = create_sessionmaker(engine)
-    analysis = AnalysisService(build_analyzer_chain(settings))
+    analysis = AnalysisService(build_analyzer_chain(settings), settings)
     embedding = EmbeddingService(settings)
     vectors = create_vector_store(settings)
     # Space-consistency guard: a persistent store whose vectors were built by

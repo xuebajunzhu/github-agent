@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     )
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
+    # Circuit breaker (Design-for-Reliability): after this many consecutive
+    # failures an analyzer stops being called for the cooldown window -- a
+    # revoked key or exhausted quota must not pay the retry tax on every call.
+    llm_breaker_threshold: int = 3
+    llm_breaker_cooldown_seconds: int = 300
     openai_api_key: Optional[str] = None
     openai_base_url: Optional[str] = None
     openai_model: str = "gpt-4o-mini"

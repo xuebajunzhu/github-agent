@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 import httpx
+import json
 
 REPO = "xuebajunzhu/github-agent"
 
@@ -147,9 +148,9 @@ def main() -> None:
 
     update = client.patch("/git/refs/heads/main", json={"sha": api_parent, "force": False})
     update.raise_for_status()
-    print(f"main updated to {parent[:12]}")
+    print(f"main updated to {api_parent[:12]}")
     if update.status_code == 200:
-        git("update-ref", "refs/remotes/origin/main", parent)
+        git("update-ref", "refs/remotes/origin/main", api_parent)
         print("PUSH VIA API OK")
 
 

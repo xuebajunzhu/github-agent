@@ -22,3 +22,4 @@ build/
 *.db-shm
 *.db-wal
 app/training/data/
+/prompts/

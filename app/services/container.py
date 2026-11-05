@@ -15,6 +15,7 @@ from app.services.evolution_service import EvolutionService
 from app.services.github_service import GitHubService
 from app.services.ingest_service import IngestService
 from app.services.patrol_service import PatrolService
+from app.services.prompt_evolution_service import PromptEvolutionService
 from app.services.recommend_service import RecommendService
 from app.services.research_service import ResearchService
 from app.speech import SpeechToText, TextToSpeech, build_stt, build_tts
@@ -38,6 +39,7 @@ class ServiceContainer:
     evolution: EvolutionService
     digest: DigestService
     research: ResearchService
+    prompt_evolution: PromptEvolutionService
     stt: SpeechToText | None = None
     tts: TextToSpeech | None = None
 
@@ -79,6 +81,7 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
         research=ResearchService(
             settings, session_factory, github, analysis, embedding, vectors
         ),
+        prompt_evolution=PromptEvolutionService(settings, session_factory, analysis),
         stt=build_stt(settings),
         tts=build_tts(settings),
     )

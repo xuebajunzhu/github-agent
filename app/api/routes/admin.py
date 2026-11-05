@@ -6,6 +6,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from app.api.dependencies import get_services, require_admin
+from app.llm import prompt_registry
 from app.schemas.admin import AdminStatusResponse, TriggerFetchRequest, TriggerFetchResponse
 from app.services.container import ServiceContainer
 
@@ -31,6 +32,13 @@ def _run_evolution_safely(services: ServiceContainer) -> None:
         services.evolution.run_cycle()
     except Exception:  # noqa: BLE001
         logger.exception("Manual evolution trigger failed")
+
+
+def _run_prompt_evolution_safely(services: ServiceContainer) -> None:
+    try:
+        services.prompt_evolution.run_cycle()
+    except Exception:  # noqa: BLE001
+        logger.exception("Manual prompt evolution trigger failed")
 
 
 @router.post("/trigger-fetch", response_model=TriggerFetchResponse)
@@ -65,6 +73,17 @@ def run_evolution(
     return TriggerFetchResponse(status="evolution_triggered", keywords=None)
 
 
+@router.post("/run-prompt-evolution", response_model=TriggerFetchResponse)
+def run_prompt_evolution(
+    background_tasks: BackgroundTasks,
+    services: ServiceContainer = Depends(get_services),
+) -> TriggerFetchResponse:
+    """Trigger one prompt-evolution cycle (harvest/mutate/gate/promote the
+    analysis system prompt). Costs a few hundred flash-tier LLM calls."""
+    background_tasks.add_task(_run_prompt_evolution_safely, services)
+    return TriggerFetchResponse(status="prompt_evolution_triggered", keywords=None)
+
+
 @router.get("/evolution")
 def evolution_status(services: ServiceContainer = Depends(get_services)):
     return {
@@ -74,6 +93,11 @@ def evolution_status(services: ServiceContainer = Depends(get_services)):
         "current_version": services.evolution.current_version(),
         "last_report": services.evolution.last_report,
         "history": services.evolution.history[-10:],
+        "prompt_evolution": {
+            "current_prompt_version": prompt_registry.current_version(),
+            "last_report": services.prompt_evolution.last_report,
+            "run_count": services.prompt_evolution.run_count,
+        },
     }
 
 

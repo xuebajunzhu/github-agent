@@ -10,13 +10,12 @@ from app.llm.base import (
     LLMAnalyzer,
     AnalysisError,
     AnalysisResult,
-    RERANK_SYSTEM_PROMPT,
-    SYSTEM_PROMPT,
     build_analysis_prompt,
     build_rerank_prompt,
     extract_json,
     result_from_json,
 )
+from app.llm.prompt_registry import analysis_prompt, rerank_prompt
 
 
 class AnthropicAnalyzer(LLMAnalyzer):
@@ -71,12 +70,12 @@ class AnthropicAnalyzer(LLMAnalyzer):
         return self._chat(system, user)
 
     def analyze(self, project_data: dict) -> AnalysisResult:
-        content = self._chat(SYSTEM_PROMPT, build_analysis_prompt(project_data))
+        content = self._chat(analysis_prompt(), build_analysis_prompt(project_data))
         return result_from_json(extract_json(content), self.name)
 
     def rank_candidates(self, query: str, candidates: list[dict]) -> tuple[list[int], str] | None:
         try:
-            content = self._chat(RERANK_SYSTEM_PROMPT, build_rerank_prompt(query, candidates))
+            content = self._chat(rerank_prompt(), build_rerank_prompt(query, candidates))
             data = extract_json(content)
             ranking = [int(index) for index in data.get("ranking") or []]
             return ranking, str(data.get("reason") or "")

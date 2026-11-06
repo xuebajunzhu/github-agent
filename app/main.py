@@ -20,6 +20,8 @@ from app.utils.logging import configure_logging, logger
 VERSION = "0.2.0"
 LANDING_PAGE = Path(__file__).resolve().parent / "static" / "index.html"
 ADMIN_PAGE = Path(__file__).resolve().parent / "static" / "admin.html"
+DETAIL_PAGE = Path(__file__).resolve().parent / "static" / "detail.html"
+TRENDING_PAGE = Path(__file__).resolve().parent / "static" / "trending.html"
 
 
 @asynccontextmanager
@@ -101,6 +103,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if ADMIN_PAGE.exists():
             return FileResponse(ADMIN_PAGE)
         raise HTTPException(status_code=404, detail="Admin page not found")
+
+    @app.get("/project/{project_id}", include_in_schema=False, response_model=None)
+    def project_page(project_id: int):
+        """Project detail page; the JS reads the id from the URL."""
+        if DETAIL_PAGE.exists():
+            return FileResponse(DETAIL_PAGE)
+        raise HTTPException(status_code=404, detail="Page not found")
+
+    @app.get("/trending", include_in_schema=False, response_model=None)
+    def trending_page():
+        if TRENDING_PAGE.exists():
+            return FileResponse(TRENDING_PAGE)
+        raise HTTPException(status_code=404, detail="Page not found")
 
     @app.get("/info", include_in_schema=False)
     def info() -> dict:

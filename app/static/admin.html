@@ -105,6 +105,14 @@
     <div class="grid">
       <div class="card"><h2>反馈报告</h2><div id="feedback"></div></div>
       <div class="card"><h2>每周精选</h2><div id="digest"></div></div>
+      <div class="card"><h2>订阅监控（新匹配 → webhook）</h2><div id="subscriptions"></div>
+        <div class="actions">
+          <input class="kw" id="subQuery" placeholder="订阅场景，如 kubernetes 部署工具">
+          <button id="btnSubAdd">添加</button>
+          <button class="ghost" id="btnSubCheck">立即巡检订阅</button>
+        </div>
+        <div class="muted">每 6 小时自动扫描一次，新匹配项目通过 NOTIFY_WEBHOOK_URL 推送</div>
+      </div>
     </div>
   </div>
 </div>
@@ -161,6 +169,7 @@ async function refresh() {
   try { renderFeedback(await api("/api/admin/feedback")); } catch (e) {}
   try { renderBreakers(await api("/api/admin/breakers")); } catch (e) {}
   try { renderDigest(await api("/api/admin/digest")); } catch (e) {}
+  try { renderSubscriptions(await api("/api/subscriptions")); } catch (e) {}
 }
 
 function renderOverview(s) {
@@ -245,6 +254,21 @@ async function renderDigest(d) {
   } catch (e) { document.getElementById("digest").innerHTML = '<div class="muted">暂无精选</div>'; }
 }
 
+function renderSubscriptions(list) {
+  const box = document.getElementById("subscriptions");
+  box.innerHTML = list.length
+    ? list.map(s =>
+        `<div class="kv"><span class="k">${esc(s.query)}</span>` +
+        `<span class="v"><button class="ghost" style="border:none;background:none;color:#f87171;cursor:pointer" ` +
+        `onclick="delSub(${s.id})">删除</button> · 已知 ${s.last_seen_count}</span></div>`).join("")
+    : '<div class="muted">暂无订阅</div>';
+}
+
+async function delSub(id) {
+  await fetch(`/api/subscriptions/${id}`, { method: "DELETE", headers: { "X-Admin-Token": TOKEN } });
+  refresh();
+}
+
 function act(path, body, name) {
   const log = document.getElementById("actionLog");
   return fetch(path, {
@@ -267,6 +291,17 @@ document.getElementById("btnPatrol").addEventListener("click", () => act("/api/a
 document.getElementById("btnEvolution").addEventListener("click", () => act("/api/admin/run-evolution", {}, "模型进化"));
 document.getElementById("btnPromptEvo").addEventListener("click", () => act("/api/admin/run-prompt-evolution", {}, "提示词进化"));
 document.getElementById("btnDrill").addEventListener("click", () => act("/api/admin/backup-drill", {}, "恢复演练"));
+document.getElementById("btnSubAdd").addEventListener("click", async () => {
+  const query = document.getElementById("subQuery").value.trim();
+  if (!query) return;
+  await fetch("/api/subscriptions", {
+    method: "POST", headers: { "X-Admin-Token": TOKEN, "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  document.getElementById("subQuery").value = "";
+  refresh();
+});
+document.getElementById("btnSubCheck").addEventListener("click", () => act("/api/subscriptions/check", {}, "订阅巡检"));
 
 function esc(s) {
   if (s === null || s === undefined) return "";

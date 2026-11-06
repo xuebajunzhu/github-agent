@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -48,4 +48,20 @@ class FeedbackRecord(Base):
     vote: Mapped[str] = mapped_column(String(8))  # "up" | "down"
     comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # web|voice|api
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Subscription(Base):
+    """A saved scenario watched by the 24/7 loop; when NEW projects start
+    matching the query, the operator's webhook gets a notification."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(Text)
+    min_score: Mapped[float] = mapped_column(Float, default=0.0)
+    top_k: Mapped[int] = mapped_column(Integer, default=5)
+    active: Mapped[int] = mapped_column(Integer, default=1)
+    last_seen_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    last_notified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>项目详情 · GitHub Agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0; padding: 40px 16px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  a.back { color: #38bdf8; font-size: 14px; text-decoration: none; }
+  .card {
+    background: rgba(30,41,59,.85); border: 1px solid #334155; border-radius: 12px;
+    padding: 22px 26px; margin: 16px 0;
+  }
+  .name { font-size: 24px; font-weight: 700; color: #38bdf8; }
+  .name a { color: inherit; text-decoration: none; }
+  .meta { color: #94a3b8; font-size: 13.5px; margin: 8px 0 14px; }
+  .meta b { color: #4ade80; font-weight: 600; }
+  .label { color: #94a3b8; font-size: 12.5px; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .06em; }
+  .summary { font-size: 15.5px; line-height: 1.65; color: #e2e8f0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .tag { background: #334155; color: #94a3b8; border-radius: 10px; font-size: 12.5px; padding: 2px 12px; }
+  .deps { color: #fbbf24; font-size: 13.5px; }
+  .similar { margin-top: 6px; }
+  .similar .row {
+    display: flex; justify-content: space-between; padding: 7px 0;
+    border-bottom: 1px solid #1e293b; font-size: 14px;
+  }
+  .similar .row:last-child { border-bottom: none; }
+  .similar a { color: #7dd3fc; text-decoration: none; }
+  .similar a:hover { text-decoration: underline; }
+  .score { color: #4ade80; font-size: 12.5px; }
+  .muted { color: #64748b; font-size: 13.5px; }
+  .err { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="/">← 返回场景搜索</a>
+  <div id="content"><div class="muted" style="margin-top:24px">加载中…</div></div>
+</div>
+<script>
+const id = parseInt(location.pathname.split("/").pop(), 10);
+
+async function load() {
+  const content = document.getElementById("content");
+  try {
+    const resp = await fetch(`/api/projects/${id}`);
+    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+    const p = await resp.json();
+
+    const maintenance = p.last_analyzed_at
+      ? `索引时间 ${new Date(p.last_analyzed_at).toLocaleDateString()}`
+      : "";
+    content.innerHTML = `
+      <div class="card">
+        <div class="name"><a href="${esc(p.url)}" target="_blank">${esc(p.full_name)}</a></div>
+        <div class="meta">★ ${p.stars} · fork ${p.forks} · ${esc(p.language || "语言未知")} · ${maintenance}</div>
+        <div class="label">摘要</div>
+        <div class="summary">${esc(p.ai_summary || p.description || "暂无摘要")}</div>
+        <div class="label">适用场景</div>
+        <div class="tags">${(p.ai_use_cases || []).map(t => `<span class="tag">${esc(t)}</span>`).join("") || '<span class="muted">未标注</span>'}</div>
+        <div class="label">技术标签</div>
+        <div class="tags">${(p.ai_tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("") || '<span class="muted">无</span>'}</div>
+        <div class="label">可能涉及的依赖</div>
+        <div class="deps">${(p.ai_dependencies || []).length ? esc(p.ai_dependencies.join(" · ")) : "未推断"}</div>
+      </div>
+      <div class="card">
+        <div class="label" style="margin-top:0">相似项目</div>
+        <div class="similar" id="similar"><div class="muted">计算中…</div></div>
+      </div>`;
+
+    const simResp = await fetch(`/api/projects/${id}/similar?top_k=6`);
+    const similar = simResp.ok ? await simResp.json() : [];
+    document.getElementById("similar").innerHTML = similar.length
+      ? similar.map(item =>
+          `<div class="row"><a href="/project/${item.project.id}">${esc(item.project.full_name)}</a>` +
+          `<span class="score">匹配 ${Math.round(item.score * 100)}%</span></div>`).join("")
+      : '<div class="muted">暂无相似项目</div>';
+  } catch (err) {
+    content.innerHTML = `<div class="card"><div class="err">${esc(err.message)}</div></div>`;
+  }
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+load();
+</script>
+</body>
+</html>

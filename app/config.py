@@ -173,6 +173,10 @@ class Settings(BaseSettings):
     notify_cooldown_minutes: int = 30
 
     # -- Backups (SQLite via the backup API + chroma dir tarball) --
+    # -- Subscriptions (saved scenarios watched for NEW matches) --
+    subscription_check_enabled: bool = True
+    subscription_check_interval_minutes: int = 360
+
     backup_enabled: bool = True
     backup_hour_utc: int = 19  # 03:00 Beijing time
     backup_retention: int = 7

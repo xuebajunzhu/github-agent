@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新晋项目 · GitHub Agent</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0; padding: 40px 16px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  h1 span { color: #38bdf8; }
+  .sub { color: #94a3b8; font-size: 13.5px; margin: 4px 0 20px; }
+  .filters { display: flex; gap: 8px; margin-bottom: 18px; align-items: center; }
+  .chip {
+    background: #1e293b; border: 1px solid #334155; color: #94a3b8; border-radius: 14px;
+    padding: 4px 14px; font-size: 13px; cursor: pointer;
+  }
+  .chip.active { color: #38bdf8; border-color: #38bdf8; }
+  a.back { color: #38bdf8; font-size: 14px; text-decoration: none; margin-left: auto; }
+  .card {
+    background: rgba(30,41,59,.85); border: 1px solid #334155; border-radius: 12px;
+    padding: 15px 20px; margin-bottom: 12px;
+  }
+  .name { color: #38bdf8; font-weight: 600; font-size: 16px; }
+  .name a { color: inherit; text-decoration: none; }
+  .name a:hover { text-decoration: underline; }
+  .meta { float: right; color: #4ade80; font-size: 13px; }
+  .summary { color: #cbd5e1; font-size: 14px; margin: 7px 0; line-height: 1.55; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { background: #334155; color: #94a3b8; border-radius: 10px; font-size: 12px; padding: 2px 10px; }
+  .muted { color: #64748b; font-size: 14px; margin-top: 24px; }
+  .err { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>GitHub <span>Agent</span> · 新晋项目</h1>
+  <div class="sub">7×24 巡检新入库的开源项目，按星数排序——看看最近有什么好东西</div>
+  <div class="filters" id="filters">
+    <span class="chip" data-days="1">今天</span>
+    <span class="chip active" data-days="7">7 天</span>
+    <span class="chip" data-days="30">30 天</span>
+    <a class="back" href="/">← 场景搜索</a>
+  </div>
+  <div id="list"><div class="muted">加载中…</div></div>
+</div>
+<script>
+let days = 7;
+
+document.querySelectorAll(".chip").forEach(chip => chip.addEventListener("click", () => {
+  document.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+  chip.classList.add("active");
+  days = parseInt(chip.dataset.days, 10);
+  load();
+}));
+
+async function load() {
+  const list = document.getElementById("list");
+  list.innerHTML = '<div class="muted">加载中…</div>';
+  try {
+    const resp = await fetch(`/api/projects/trending?days=${days}&limit=30`);
+    if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+    const projects = await resp.json();
+    if (!projects.length) {
+      list.innerHTML = `<div class="muted">最近 ${days} 天没有新入库项目——巡检还在路上</div>`;
+      return;
+    }
+    list.innerHTML = "";
+    projects.forEach(p => {
+      const div = document.createElement("div");
+      div.className = "card";
+      div.innerHTML =
+        `<div class="name"><a href="/project/${p.id}">${esc(p.full_name)}</a>` +
+        `<span class="meta">★ ${p.stars} · ${esc(p.language || "?")}</span></div>` +
+        `<div class="summary">${esc(p.ai_summary || p.description || "")}</div>` +
+        `<div class="tags">${(p.ai_tags || []).slice(0, 5).map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>`;
+      list.appendChild(div);
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="err">${esc(err.message)}</div>`;
+  }
+}
+
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+load();
+</script>
+</body>
+</html>

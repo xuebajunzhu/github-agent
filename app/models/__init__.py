@@ -1,6 +1,6 @@
 from app.models.base import Base
 from app.models.project import Project
 from app.models.research import ResearchCache
-from app.models.user import QueryHistory, User
+from app.models.user import QueryHistory, Subscription, User
 
 __all__ = ["Base", "Project", "ResearchCache", "User", "QueryHistory"]

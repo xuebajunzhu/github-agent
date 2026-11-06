@@ -69,6 +69,16 @@ class SchedulerService:
                 max_instances=1,
                 coalesce=True,
             )
+        if settings.subscription_check_enabled:
+            self._scheduler.add_job(
+                self._run_subscriptions,
+                "interval",
+                minutes=settings.subscription_check_interval_minutes,
+                id="subscription_check",
+                name="Subscriptions: watch saved scenarios for new matches",
+                max_instances=1,
+                coalesce=True,
+            )
         if settings.backup_enabled:
             self._scheduler.add_job(
                 self._run_backup,
@@ -125,6 +135,12 @@ class SchedulerService:
             await asyncio.to_thread(self._services.gap_scout.run_scout)
         except Exception:  # noqa: BLE001
             logger.exception("Gap scout run failed")
+
+    async def _run_subscriptions(self) -> None:
+        try:
+            await asyncio.to_thread(self._services.subscription.run_round)
+        except Exception:  # noqa: BLE001
+            logger.exception("Subscription check failed")
 
     async def _run_backup(self) -> None:
         try:

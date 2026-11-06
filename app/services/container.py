@@ -20,6 +20,7 @@ from app.services.patrol_service import PatrolService
 from app.services.prompt_evolution_service import PromptEvolutionService
 from app.services.recommend_service import RecommendService
 from app.services.research_service import ResearchService
+from app.services.subscription_service import SubscriptionService
 from app.speech import SpeechToText, TextToSpeech, build_stt, build_tts
 from app.utils.crypto import TokenCipher
 from app.utils.notifier import Notifier
@@ -44,6 +45,7 @@ class ServiceContainer:
     research: ResearchService
     prompt_evolution: PromptEvolutionService
     gap_scout: GapScoutService
+    subscription: SubscriptionService
     backup: BackupService
     notifier: Notifier
     stt: SpeechToText | None = None
@@ -90,6 +92,7 @@ def build_services(settings: Settings, engine: Engine) -> ServiceContainer:
         ),
         prompt_evolution=PromptEvolutionService(settings, session_factory, analysis),
         gap_scout=GapScoutService(settings, session_factory, analysis, notifier),
+        subscription=SubscriptionService(settings, session_factory, recommend, notifier),
         backup=BackupService(settings),
         notifier=notifier,
         stt=build_stt(settings),

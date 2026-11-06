@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from app.models.user import FeedbackRecord, QueryHistory
 from app.services.analysis_service import AnalysisService
 from app.services.bm25 import BM25Index
 from app.services.embedding_service import EmbeddingService, build_project_text, parse_embedding_id
+from app.services.perf_counters import TIMERS, record_ms
 from app.utils.timeutil import maintenance_decay
 from app.vectorstore.base import VectorStore, VectorStoreError
 
@@ -250,19 +252,30 @@ class RecommendService:
             self._bge_reranker.preload_async()
 
     def recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
-        translation = self._english_translation(query)
-        query_vectors = [self._embedding.embed(query)]
-        if translation:
-            query_vectors.append(self._embedding.embed(translation))
+        started = time.perf_counter()
+        try:
+            return self._recommend(query, top_k)
+        finally:
+            TIMERS.record("total", (time.perf_counter() - started) * 1000)
+
+    def _recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
+        translation = None
+        with record_ms(TIMERS, "translate"):
+            translation = self._english_translation(query)
+        with record_ms(TIMERS, "encode"):
+            query_vectors = [self._embedding.embed(query)]
+            if translation:
+                query_vectors.append(self._embedding.embed(translation))
         try:
             fetch_k = top_k * 2 if self._settings.hybrid_retrieval else top_k
             # multi-language dense search: best similarity wins per document
-            merged: dict[str, float] = {}
-            for vector in query_vectors:
-                for embedding_id, similarity in self._vectors.query(vector, top_k=fetch_k):
-                    if embedding_id not in merged or similarity > merged[embedding_id]:
-                        merged[embedding_id] = similarity
-            hits = sorted(merged.items(), key=lambda pair: -pair[1])[:fetch_k]
+            with record_ms(TIMERS, "dense"):
+                merged: dict[str, float] = {}
+                for vector in query_vectors:
+                    for embedding_id, similarity in self._vectors.query(vector, top_k=fetch_k):
+                        if embedding_id not in merged or similarity > merged[embedding_id]:
+                            merged[embedding_id] = similarity
+                hits = sorted(merged.items(), key=lambda pair: -pair[1])[:fetch_k]
         except VectorStoreError as exc:
             raise RecommendError(f"Vector search failed: {exc}") from exc
 
@@ -280,25 +293,28 @@ class RecommendService:
         # docs lexically only through it).
         bm25_ranked: list[int] = []
         if self._settings.hybrid_retrieval:
-            try:
-                index = self._get_bm25_index()
-                if index is not None:
-                    bm25_texts = [query] + ([translation] if translation else [])
-                    best: dict[int, float] = {}
-                    for text in bm25_texts:
-                        for pid, score in index.search(text, top_k=fetch_k):
-                            best[pid] = max(best.get(pid, 0.0), score)
-                    bm25_ranked = [
-                        pid for pid, _ in sorted(best.items(), key=lambda pair: -pair[1])[:fetch_k]
-                    ]
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(f"BM25 channel failed (dense-only this request): {exc}")
+            with record_ms(TIMERS, "bm25"):
+                try:
+                    index = self._get_bm25_index()
+                    if index is not None:
+                        bm25_texts = [query] + ([translation] if translation else [])
+                        best: dict[int, float] = {}
+                        for text in bm25_texts:
+                            for pid, score in index.search(text, top_k=fetch_k):
+                                best[pid] = max(best.get(pid, 0.0), score)
+                        bm25_ranked = [
+                            pid
+                            for pid, _ in sorted(best.items(), key=lambda pair: -pair[1])[:fetch_k]
+                        ]
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(f"BM25 channel failed (dense-only this request): {exc}")
 
         if bm25_ranked:
-            project_ids, fused_scores = self._rrf_fuse(dense_ranked, bm25_ranked)
-            # normalize fused RRF scores to a 0-1 display scale
-            max_fused = max(fused_scores.values()) or 1.0
-            score_by_id = {pid: fused_scores[pid] / max_fused for pid in project_ids}
+            with record_ms(TIMERS, "fuse"):
+                project_ids, fused_scores = self._rrf_fuse(dense_ranked, bm25_ranked)
+                # normalize fused RRF scores to a 0-1 display scale
+                max_fused = max(fused_scores.values()) or 1.0
+                score_by_id = {pid: fused_scores[pid] / max_fused for pid in project_ids}
         else:
             project_ids = dense_ranked
             score_by_id = dict(similarity_by_id)
@@ -332,17 +348,19 @@ class RecommendService:
 
         # external feedback: downvoted projects sink, upvoted ones rise
         if self._settings.feedback_in_ranking:
-            self._apply_feedback(results)
+            with record_ms(TIMERS, "feedback"):
+                self._apply_feedback(results)
 
         results = results[:top_k]
 
         if self._settings.enable_llm_rerank and results:
-            if self._bge_reranker is not None:
-                results = self._rerank_local(self._bge_reranker, query, results)
-            elif self._laya is not None:
-                results = self._rerank_local(self._laya, query, results)
-            else:
-                results = self._rerank(query, results)
+            with record_ms(TIMERS, "rerank"):
+                if self._bge_reranker is not None:
+                    results = self._rerank_local(self._bge_reranker, query, results)
+                elif self._laya is not None:
+                    results = self._rerank_local(self._laya, query, results)
+                else:
+                    results = self._rerank(query, results)
 
         self._record_history(query, top_k, len(results))
         return results

@@ -91,6 +91,16 @@ def breaker_status(services: ServiceContainer = Depends(get_services)):
     return services.analysis.breaker_states()
 
 
+@router.get("/timers")
+def latency_timers():
+    """Rolling per-stage latency snapshot (p50/p95) of the recommend hot path
+    (encode / dense / bm25 / fuse / feedback / rerank / total). Tuning input
+    for rerank/hybrid decisions; resets with the process."""
+    from app.services.perf_counters import TIMERS
+
+    return {"stages": TIMERS.snapshot()}
+
+
 @router.post("/backup-drill", response_model=None)
 def backup_drill(services: ServiceContainer = Depends(get_services)) -> dict:
     """Restore drill (DFR): restores the newest backups into staging, verifies

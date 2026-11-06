@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -37,6 +38,8 @@ class IngestStats:
     analyzed: int = 0
     analysis_failed: int = 0
     embedded: int = 0
+    filtered_quality: int = 0
+    filtered_duplicate: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -102,7 +105,9 @@ class IngestService:
                 if repo["github_id"] not in seen:
                     seen.add(repo["github_id"])
                     repos.append(repo)
-        stats.fetched = len(repos)
+        if repos:
+            repos = self._quality_gate(repos, stats)
+        stats.fetched = len(repos)  # post-gate: what actually entered the pipeline
         if repos:
             result = self.ingest_repositories(repos)
             stats.created = result["created"]
@@ -112,6 +117,52 @@ class IngestService:
             stats.embedded = result["embedded"]
         logger.info(f"Scheduled fetch finished: {stats.as_dict()}")
         return stats.as_dict()
+
+    def _quality_gate(self, repos: list[dict], stats: IngestStats) -> list[dict]:
+        """Ingest quality defense (the last outstanding P1 item):
+
+        1. curated-list filter — "awesome" lists, cheatsheets and roadmaps are
+           link collections, not projects; they dilute semantic search,
+        2. same-name dedupe — keyword crawls keep finding popular forks
+           ("someone/pytorch"); the already-indexed original wins, newcomers
+           with a distinct name are unaffected.
+
+        Both are config-gated and every drop is counted in the stats.
+        """
+        if not self._settings.ingest_quality_filter:
+            return repos
+        kept: list[dict] = []
+        seen_names: set[str] = set()
+        with self._session_factory() as session:
+            indexed = {
+                str(name).lower(): str(name).lower().split("/")[-1]
+                for (name,) in session.query(Project.full_name).all()
+            }
+        existing_name_parts = set(indexed.values())
+        for repo in repos:
+            name = str(repo.get("full_name") or "")
+            name_part = name.lower().split("/")[-1]
+            topics = {str(topic).lower() for topic in (repo.get("topics") or [])}
+            if any(re.search(pattern, name_part, re.IGNORECASE) for pattern in self._settings.ingest_exclude_name_patterns):
+                stats.filtered_quality += 1
+                logger.debug(f"Quality gate: filtered curated repo {name}")
+                continue
+            if topics & set(self._settings.ingest_exclude_topics):
+                stats.filtered_quality += 1
+                logger.debug(f"Quality gate: filtered curated repo {name} (topics)")
+                continue
+            already_indexed = name.lower() in indexed
+            if self._settings.ingest_dedupe_by_name and not already_indexed and name_part in existing_name_parts:
+                stats.filtered_duplicate += 1
+                logger.debug(f"Quality gate: same-name duplicate skipped {name}")
+                continue
+            seen_names.add(name_part)
+            kept.append(repo)
+        dropped = stats.filtered_quality + stats.filtered_duplicate
+        if dropped:
+            logger.info(f"Quality gate: kept {len(kept)}/{len(repos)} repos "
+                        f"(curated {stats.filtered_quality}, duplicate {stats.filtered_duplicate})")
+        return kept
 
     def _next_keyword_slice(self) -> list[str]:
         all_keywords = list(self._settings.github_search_keywords)

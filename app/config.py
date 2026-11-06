@@ -59,6 +59,17 @@ class Settings(BaseSettings):
     github_per_page: int = 20
     github_max_repos_per_keyword: int = 20
     github_max_analyze_per_run: int = 30
+    # Ingest quality defense: curated lists (awesome/cheatsheet/roadmap) are
+    # link collections, not projects -- they dilute semantic search; same-name
+    # dedupe keeps the already-indexed original over later-found forks.
+    ingest_quality_filter: bool = True
+    ingest_exclude_name_patterns: List[str] = Field(
+        default_factory=lambda: ["^awesome"]
+    )
+    ingest_exclude_topics: List[str] = Field(
+        default_factory=lambda: ["awesome", "awesome-list"]
+    )
+    ingest_dedupe_by_name: bool = True
     github_fetch_readme: bool = True
     github_readme_max_chars: int = 2000
     github_max_retries: int = 3
@@ -240,6 +251,8 @@ class Settings(BaseSettings):
         "github_search_keywords",
         "llm_fallback_providers",
         "cors_origins",
+        "ingest_exclude_name_patterns",
+        "ingest_exclude_topics",
         mode="before",
     )
     @classmethod

@@ -73,3 +73,8 @@ class _RecordContext:
         elapsed = (time.perf_counter() - self._start) * 1000
         self._timers.record(self._stage, elapsed)
         return None
+
+
+# process-wide instance: the admin surface snapshots this, recommend records
+# into it. Tests may construct their own StageTimers for isolation.
+TIMERS = StageTimers()

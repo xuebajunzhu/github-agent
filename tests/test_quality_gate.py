@@ -152,3 +152,11 @@ def test_stage_timers_percentile_math():
     assert snapshot["p50_ms"] == 51.0
     assert snapshot["p95_ms"] == 95.0
     assert snapshot["avg_ms"] == 50.5
+
+
+def test_admin_console_page_served(client):
+    response = client.get("/admin")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "ADMIN_TOKEN" in response.text, "the console asks for the token"
+    assert "/api/admin/timers" in response.text

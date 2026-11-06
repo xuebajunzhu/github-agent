@@ -4,7 +4,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -19,6 +19,7 @@ from app.utils.logging import configure_logging, logger
 
 VERSION = "0.2.0"
 LANDING_PAGE = Path(__file__).resolve().parent / "static" / "index.html"
+ADMIN_PAGE = Path(__file__).resolve().parent / "static" / "admin.html"
 
 
 @asynccontextmanager
@@ -93,6 +94,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if LANDING_PAGE.exists():
             return FileResponse(LANDING_PAGE)
         return _info_json(app)
+
+    @app.get("/admin", include_in_schema=False, response_model=None)
+    def admin_page():
+        """Read-only ops console (token auth happens per-API-call, not on the page)."""
+        if ADMIN_PAGE.exists():
+            return FileResponse(ADMIN_PAGE)
+        raise HTTPException(status_code=404, detail="Admin page not found")
 
     @app.get("/info", include_in_schema=False)
     def info() -> dict:

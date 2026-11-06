@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Agent · 管理控制台</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    min-height: 100vh; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #e2e8f0; padding: 32px 16px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  h1 span { color: #38bdf8; }
+  .sub { color: #94a3b8; font-size: 13px; margin-bottom: 22px; }
+  .login {
+    background: rgba(30,41,59,.9); border: 1px solid #334155; border-radius: 12px;
+    padding: 20px; max-width: 460px; margin: 40px auto; text-align: center;
+  }
+  .login input {
+    width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155;
+    background: #0f172a; color: #e2e8f0; margin: 10px 0; outline: none; font-size: 14px;
+  }
+  .login input:focus { border-color: #38bdf8; }
+  .login button, .actions button {
+    padding: 9px 20px; border-radius: 8px; border: none; background: #38bdf8;
+    color: #0f172a; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  .login button:hover { background: #7dd3fc; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+  .card {
+    background: rgba(30,41,59,.85); border: 1px solid #334155; border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 15px; color: #38bdf8; margin-bottom: 10px; font-weight: 600; }
+  .kv { display: flex; justify-content: space-between; padding: 3px 0; font-size: 13.5px; }
+  .kv .k { color: #94a3b8; } .kv .v { color: #e2e8f0; text-align: right; max-width: 65%; word-break: break-all; }
+  .v.ok { color: #4ade80; } .v.bad { color: #f87171; } .v.warn { color: #fbbf24; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  th { text-align: left; color: #94a3b8; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #334155; }
+  td { padding: 4px 6px; border-bottom: 1px solid #1e293b; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .actions button.ghost { background: transparent; border: 1px solid #334155; color: #94a3b8; font-weight: 500; }
+  .actions button.ghost:hover { border-color: #38bdf8; color: #38bdf8; }
+  .actions input.kw {
+    flex: 1; min-width: 180px; padding: 8px 12px; border-radius: 8px; border: 1px solid #334155;
+    background: #0f172a; color: #e2e8f0; font-size: 13px; outline: none;
+  }
+  .muted { color: #64748b; font-size: 12px; margin-top: 8px; }
+  .err { color: #f87171; font-size: 13px; }
+  .bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .refresh { font-size: 13px; color: #94a3b8; display: flex; gap: 10px; align-items: center; }
+  .refresh label { cursor: pointer; }
+  pre { background: #0f172a; border-radius: 8px; padding: 10px; font-size: 12px; overflow-x: auto;
+        color: #cbd5e1; white-space: pre-wrap; word-break: break-all; }
+  a { color: #94a3b8; text-decoration: none; } a:hover { color: #38bdf8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <h1>GitHub <span>Agent</span> · 管理控制台</h1>
+    <div class="refresh">
+      <label><input type="checkbox" id="auto" checked> 30s 自动刷新</label>
+      <a href="/">落地页</a> · <a href="/api/voice/page">语音版</a> · <a href="/docs">API</a>
+    </div>
+  </div>
+  <div class="sub">需要管理员令牌（.env 的 ADMIN_TOKEN）；仅本机浏览器存储，不会发送到别处</div>
+
+  <div class="login" id="login">
+    <div style="color:#94a3b8; font-size:14px;">输入管理员令牌以载入控制台</div>
+    <input type="password" id="token" placeholder="ADMIN_TOKEN">
+    <br><button id="loginBtn">进入控制台</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+
+  <div id="console" style="display:none">
+    <div class="grid">
+      <div class="card"><h2>运行概览</h2><div id="overview"></div></div>
+      <div class="card">
+        <h2>运维动作</h2>
+        <div class="actions">
+          <input class="kw" id="kw" placeholder="触发检索的关键词（逗号分隔，留空=轮换下一片）">
+          <button id="btnFetch">检索</button>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="btnPatrol">立即巡检</button>
+          <button class="ghost" id="btnEvolution">进化一轮</button>
+          <button class="ghost" id="btnPromptEvo">提示词进化</button>
+          <button class="ghost" id="btnDrill">备份恢复演练</button>
+        </div>
+        <div class="muted">动作在后台执行，结果反映在下一次自动刷新里</div>
+        <pre id="actionLog" class="hidden"></pre>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card"><h2>巡检（最近一次）</h2><div id="patrol"></div></div>
+      <div class="card"><h2>延迟计时器（p50 / p95 ms）</h2><div id="timers"></div></div>
+      <div class="card"><h2>进化状态</h2><div id="evolution"></div></div>
+      <div class="card"><h2>熔断器</h2><div id="breakers"></div></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h2>反馈报告</h2><div id="feedback"></div></div>
+      <div class="card"><h2>每周精选</h2><div id="digest"></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem("admin_token") || "";
+let timerId = null;
+
+document.getElementById("loginBtn").addEventListener("click", login);
+document.getElementById("token").addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+document.getElementById("auto").addEventListener("change", () => { if (document.getElementById("auto").checked) boot(); });
+
+if (TOKEN) { document.getElementById("token").value = TOKEN; login(); }
+
+async function api(path, opts) {
+  const resp = await fetch(path, { headers: { "X-Admin-Token": TOKEN }, ...opts });
+  if (resp.status === 401) { showLogin("令牌无效"); throw new Error("401"); }
+  if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || resp.statusText);
+  return resp.json();
+}
+
+function showLogin(msg) {
+  document.getElementById("console").style.display = "none";
+  document.getElementById("login").style.display = "block";
+  document.getElementById("loginErr").textContent = msg || "";
+  if (timerId) { clearInterval(timerId); timerId = null; }
+}
+
+async function login() {
+  TOKEN = document.getElementById("token").value.trim();
+  try {
+    await api("/api/admin/status");
+    localStorage.setItem("admin_token", TOKEN);
+    document.getElementById("login").style.display = "none";
+    document.getElementById("console").style.display = "block";
+    boot();
+  } catch (e) { if (e.message !== "401") showLogin(e.message); }
+}
+
+function boot() {
+  refresh();
+  if (timerId) clearInterval(timerId);
+  if (document.getElementById("auto").checked) timerId = setInterval(refresh, 30000);
+}
+
+function kv(k, v, cls) {
+  return `<div class="kv"><span class="k">${esc(k)}</span><span class="v ${cls || ""}">${esc(v)}</span></div>`;
+}
+
+async function refresh() {
+  try { renderOverview(await api("/api/admin/status")); } catch (e) { if (e.message === "401") return; }
+  try { renderTimers(await api("/api/admin/timers")); } catch (e) {}
+  try { renderEvolution(await api("/api/admin/evolution")); } catch (e) {}
+  try { renderFeedback(await api("/api/admin/feedback")); } catch (e) {}
+  try { renderBreakers(await api("/api/admin/breakers")); } catch (e) {}
+  try { renderDigest(await api("/api/admin/digest")); } catch (e) {}
+}
+
+function renderOverview(s) {
+  document.getElementById("overview").innerHTML =
+    kv("项目总数", s.projects) +
+    kv("已分析", s.analyzed, "ok") + kv("待分析", s.pending, s.pending > 0 ? "warn" : "ok") +
+    kv("失败", s.failed, s.failed > 0 ? "bad" : "ok") +
+    kv("向量数", s.vector_count) +
+    kv("调度器", s.scheduler_running ? "运行中" : "停止", s.scheduler_running ? "ok" : "bad") +
+    kv("分析器", s.llm_provider) + kv("嵌入器", s.embedder_provider) +
+    kv("向量库", s.vector_store) +
+    kv("巡检轮次", s.patrol_run_count) +
+    kv("质量门", s.quality_gate ? { filtered_quality: s.quality_gate.filtered_quality, filtered_duplicate: s.quality_gate.filtered_duplicate } : "") ||
+    "";
+}
+
+function renderPatrol(s) {
+  const r = s.patrol_last_report;
+  document.getElementById("patrol").innerHTML = r
+    ? kv("时间", r.finished_at || r.started_at) +
+      kv("重排失败", r.requeued_failed) + kv("重排被踩", r.requeued_downvoted ?? 0) +
+      kv("分析", r.analyzed, r.analyzed ? "ok" : "") + kv("嵌入", r.embedded) +
+      kv("向量自愈", r.reconciled_vectors) + kv("历史清理", r.pruned_queries ?? 0) +
+      kv("错误", (r.errors || []).length, (r.errors || []).length ? "bad" : "ok") +
+      ((r.errors || []).length ? `<pre>${esc(r.errors.join("\n"))}</pre>` : "")
+    : '<div class="muted">尚无巡检报告</div>';
+}
+
+function renderTimers(data) {
+  const stages = data.stages || {};
+  const rows = Object.entries(stages).map(([name, t]) =>
+    `<tr><td>${esc(name)}</td><td class="num">${t.count}</td><td class="num">${t.avg_ms}</td>` +
+    `<td class="num">${t.p50_ms}</td><td class="num">${t.p95_ms}</td></tr>`).join("");
+  document.getElementById("timers").innerHTML = rows
+    ? `<table><tr><th>阶段</th><th>次数</th><th>均值</th><th>p50</th><th>p95</th></tr>${rows}</table>`
+    : '<div class="muted">暂无请求</div>';
+}
+
+function renderEvolution(d) {
+  const v = d.current_version || "未版本化";
+  const last = d.last_report;
+  document.getElementById("evolution").innerHTML =
+    kv("当前版本", v) +
+    kv("轮次", d.run_count) +
+    kv("周期", d.enabled ? `每 ${d.interval_minutes} 分钟` : "关闭") +
+    (last ? kv("最近结果", last.outcome, last.outcome === "promoted" ? "ok" : (last.outcome === "failed" ? "bad" : "")) +
+             kv("说明", (last.reason || "").slice(0, 80)) : "") +
+    (d.history && d.history.length
+      ? `<table><tr><th>时间</th><th>结果</th><th>挑战者 F1</th></tr>` +
+        d.history.slice(-5).reverse().map(h =>
+          `<tr><td>${esc((h.finished_at || "").slice(5, 16))}</td><td>${esc(h.outcome)}</td><td class="num">${h.challenger_f1 ?? "-"}</td></tr>`).join("") +
+        `</table>` : "");
+}
+
+function renderBreakers(data) {
+  const entries = Object.entries(data || {});
+  document.getElementById("breakers").innerHTML = entries.length
+    ? entries.map(([name, b]) =>
+        kv(name, `${b.state || "?"} · 连续失败 ${b.consecutive_failures ?? 0}`,
+           b.state === "open" ? "bad" : "ok")).join("")
+    : '<div class="muted">无熔断器状态</div>';
+}
+
+function renderFeedback(d) {
+  document.getElementById("feedback").innerHTML =
+    kv("总反馈", d.total) + kv("👍", d.up, "ok") + kv("👎", d.down, d.down ? "warn" : "") +
+    (d.downvoted_projects && d.downvoted_projects.length
+      ? kv("被踩最多", d.downvoted_projects.slice(0, 3).map(p => `${p.project}(${p.votes})`).join(", "), "warn") : "") +
+    (d.zero_result_queries && d.zero_result_queries.length
+      ? kv("零结果查询", d.zero_result_queries.slice(0, 3).join(" / "), "warn") : "") +
+    (d.top_queries && d.top_queries.length
+      ? kv("高频查询", d.top_queries.slice(0, 3).map(q => `${q.query}(${q.uses})`).join(", ")) : "");
+}
+
+async function renderDigest(d) {
+  try {
+    document.getElementById("digest").innerHTML =
+      (d.projects && d.projects.length
+        ? d.projects.slice(0, 5).map(p =>
+            `<div class="kv"><span class="k">${esc(p.full_name)}</span><span class="v">★ ${p.stars}</span></div>`).join("")
+        : '<div class="muted">暂无精选</div>');
+  } catch (e) { document.getElementById("digest").innerHTML = '<div class="muted">暂无精选</div>'; }
+}
+
+function act(path, body, name) {
+  const log = document.getElementById("actionLog");
+  return fetch(path, {
+    method: "POST",
+    headers: { "X-Admin-Token": TOKEN, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : null,
+  }).then(async r => {
+    const text = r.ok ? `${name} 已触发` : `${name} 失败: HTTP ${r.status}`;
+    log.textContent = (log.textContent ? log.textContent + "\n" : "") + `${new Date().toLocaleTimeString()} ${text}`;
+    log.classList.remove("hidden");
+  });
+}
+
+document.getElementById("btnFetch").addEventListener("click", () => {
+  const raw = document.getElementById("kw").value.trim();
+  const keywords = raw ? raw.split(",").map(s => s.trim()).filter(Boolean) : null;
+  act("/api/admin/trigger-fetch", keywords ? { keywords } : {}, "检索");
+});
+document.getElementById("btnPatrol").addEventListener("click", () => act("/api/admin/run-patrol", {}, "巡检"));
+document.getElementById("btnEvolution").addEventListener("click", () => act("/api/admin/run-evolution", {}, "模型进化"));
+document.getElementById("btnPromptEvo").addEventListener("click", () => act("/api/admin/run-prompt-evolution", {}, "提示词进化"));
+document.getElementById("btnDrill").addEventListener("click", () => act("/api/admin/backup-drill", {}, "恢复演练"));
+
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+</script>
+</body>
+</html>

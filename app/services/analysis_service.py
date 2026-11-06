@@ -24,6 +24,13 @@ class AnalysisService:
             for analyzer in self.analyzers
         }
 
+    def breaker_states(self) -> dict[str, dict]:
+        """Observability: per-analyzer breaker state for the admin endpoints."""
+        return {
+            name: {"failures": breaker.failures, "open": breaker.open}
+            for name, breaker in self._breakers.items()
+        }
+
     def _breaker(self, analyzer: LLMAnalyzer) -> CircuitBreaker:
         return self._breakers.setdefault(
             analyzer.name,

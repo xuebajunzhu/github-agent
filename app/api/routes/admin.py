@@ -84,6 +84,21 @@ def run_prompt_evolution(
     return TriggerFetchResponse(status="prompt_evolution_triggered", keywords=None)
 
 
+@router.get("/breakers")
+def breaker_status(services: ServiceContainer = Depends(get_services)):
+    """Per-analyzer circuit breaker state (DFR observability): consecutive
+    failure counts and whether the circuit is currently open."""
+    return services.analysis.breaker_states()
+
+
+@router.post("/backup-drill", response_model=None)
+def backup_drill(services: ServiceContainer = Depends(get_services)) -> dict:
+    """Restore drill (DFR): restores the newest backups into staging, verifies
+    SQLite integrity and row counts against the live database. Read-only for
+    live files; staging is cleaned up afterwards."""
+    return services.backup.restore_drill()
+
+
 @router.get("/evolution")
 def evolution_status(services: ServiceContainer = Depends(get_services)):
     return {

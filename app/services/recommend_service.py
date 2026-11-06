@@ -1,8 +1,11 @@
 """Recommendation service: semantic search over embedded projects."""
 from __future__ import annotations
 
+import json
+import re
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import func
@@ -62,6 +65,15 @@ class RecommendService:
         self._feedback_weights: dict[int, float] = {}
         self._feedback_signature: tuple[int, str] | None = None
         self._feedback_lock = threading.Lock()
+        # offline zh->en translation leg (opus-mt), constructed lazily because
+        # it only materializes when the model files exist
+        self._offline_translator = None
+        if settings.query_translation:
+            from app.utils.translator import OfflineTranslator
+
+            candidate = OfflineTranslator(settings.offline_translator_model)
+            if candidate.available():
+                self._offline_translator = candidate
 
     def _get_feedback_weights(self) -> dict[int, float]:
         """project_id -> score multiplier in [1-bonus^-1, 1+bonus]: downvotes
@@ -126,6 +138,70 @@ class RecommendService:
         if adjusted:
             results.sort(key=lambda hit: hit.score, reverse=True)
 
+    _CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff]")
+
+    def _english_translation(self, query: str) -> str | None:
+        """English rendering of a CJK query, for the dense+BM25 second channel.
+
+        Chain: primary LLM (one call per distinct query, cached on disk) ->
+        offline opus-mt model (zero cost, no API) -> None. Returns None when
+        the query has no CJK, the feature is off, or every leg is
+        unavailable -- the search then degrades to single-language behavior.
+        """
+        if not self._settings.query_translation or not self._CJK_RE.search(query):
+            return None
+        cache_path = Path(self._settings.query_translations_file)
+        cache: dict[str, str] = {}
+        try:
+            if cache_path.exists():
+                cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning(f"Translation cache unreadable: {exc}")
+        if query in cache:
+            return cache[query] or None
+
+        def store(translation: str) -> str:
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache[query] = translation
+                cache_path.write_text(
+                    json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+            except OSError as exc:
+                logger.warning(f"Could not persist translation cache: {exc}")
+            logger.debug(f"Translated {query!r} -> {translation!r}")
+            return translation
+
+        # leg 1: chat-capable analyzers (e.g. DeepSeek)
+        for analyzer in self._analysis.analyzers:
+            chat = getattr(analyzer, "chat", None)
+            if chat is None or not analyzer.available():
+                continue
+            try:
+                content = chat(
+                    "Translate the user's request into one concise English sentence "
+                    "describing the kind of open-source project they want. Respond with "
+                    'strict JSON only: {"translation": "..."}.',
+                    query,
+                )
+                from app.llm.base import extract_json
+
+                translation = str(extract_json(content).get("translation") or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"Query translation failed for {query!r}: {exc}")
+                translation = ""
+            if translation:
+                return store(translation)
+            break  # the primary LLM failed; don't loop through weaker analyzers
+
+        # leg 2: offline neural translation (zero cost, no API key needed)
+        translator = self._offline_translator
+        if translator is not None and translator.available():
+            offline = translator.translate(query)
+            if offline:
+                return store(offline)
+        return None
+
     def _get_bm25_index(self) -> BM25Index | None:
         with self._session_factory() as session:
             count, last_updated = (
@@ -174,10 +250,19 @@ class RecommendService:
             self._bge_reranker.preload_async()
 
     def recommend(self, query: str, top_k: int = 5) -> list[RecommendHit]:
-        query_vector = self._embedding.embed(query)
+        translation = self._english_translation(query)
+        query_vectors = [self._embedding.embed(query)]
+        if translation:
+            query_vectors.append(self._embedding.embed(translation))
         try:
             fetch_k = top_k * 2 if self._settings.hybrid_retrieval else top_k
-            hits = self._vectors.query(query_vector, top_k=fetch_k)
+            # multi-language dense search: best similarity wins per document
+            merged: dict[str, float] = {}
+            for vector in query_vectors:
+                for embedding_id, similarity in self._vectors.query(vector, top_k=fetch_k):
+                    if embedding_id not in merged or similarity > merged[embedding_id]:
+                        merged[embedding_id] = similarity
+            hits = sorted(merged.items(), key=lambda pair: -pair[1])[:fetch_k]
         except VectorStoreError as exc:
             raise RecommendError(f"Vector search failed: {exc}") from exc
 
@@ -190,13 +275,22 @@ class RecommendService:
                 similarity_by_id[project_id] = float(similarity)
 
         # lexical channel: exact keyword hits that embeddings blur; fused with
-        # dense via Reciprocal Rank Fusion when enabled
+        # dense via Reciprocal Rank Fusion when enabled. The English
+        # translation joins this channel too (a Chinese query matches English
+        # docs lexically only through it).
         bm25_ranked: list[int] = []
         if self._settings.hybrid_retrieval:
             try:
                 index = self._get_bm25_index()
                 if index is not None:
-                    bm25_ranked = [pid for pid, _ in index.search(query, top_k=fetch_k)]
+                    bm25_texts = [query] + ([translation] if translation else [])
+                    best: dict[int, float] = {}
+                    for text in bm25_texts:
+                        for pid, score in index.search(text, top_k=fetch_k):
+                            best[pid] = max(best.get(pid, 0.0), score)
+                    bm25_ranked = [
+                        pid for pid, _ in sorted(best.items(), key=lambda pair: -pair[1])[:fetch_k]
+                    ]
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"BM25 channel failed (dense-only this request): {exc}")
 

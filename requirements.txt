@@ -14,6 +14,9 @@ anthropic>=0.28
 psycopg2-binary>=2.9
 python-multipart>=0.0.9
 numpy>=1.26
+sentencepiece>=0.2
+h5py>=3.10
+sacremoses>=0.1
 
 # Optional shared infrastructure (rate limiting, job locks, hot caches)
 redis>=5

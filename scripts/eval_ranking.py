@@ -32,6 +32,16 @@ CASES: list[tuple[str, set[str]]] = [
     ({"query": "深度学习图像分类"}, {"pytorch/pytorch", "tensorflow/tensorflow"}),
 ]
 
+# Cross-lingual slice: Chinese scenario -> projects whose descriptions/summaries
+# are English-only. This is where the index was measurably weak (zh queries get
+# outcompeted by any project that literally contains Chinese text).
+XL_CASES: list[tuple[str, set[str]]] = [
+    ({"query": "自托管的应用部署平台"}, {"dokku/dokku", "portainer/portainer", "kubernetes/kubernetes"}),
+    ({"query": "密码管理工具"}, {"dani-garcia/vaultwarden"}),
+    ({"query": "静态站点生成器"}, {"withastro/astro"}),
+    ({"query": "端到端测试工具"}, {"microsoft/playwright"}),
+]
+
 
 def make_service(settings: Settings, engine):
     services = build_services(settings, engine)
@@ -44,13 +54,14 @@ def make_service(settings: Settings, engine):
     )
 
 
-def evaluate(service: RecommendService, label: str) -> dict:
+def evaluate(service: RecommendService, label: str, cases=None) -> dict:
+    cases = cases if cases is not None else CASES
     p3s: list[float] = []
     rr: list[float] = []
     latencies: list[float] = []
     per_query = []
     service.recommend("warmup query", top_k=3)  # model warm
-    for query_dict, relevant in CASES:
+    for query_dict, relevant in cases:
         query = query_dict["query"]
         start = time.perf_counter()
         hits = service.recommend(query, top_k=3)
@@ -92,7 +103,7 @@ def main() -> None:
         (
             "hybrid only (no rerank)",
             Settings(**base, embedder_provider=Settings().embedder_provider,
-                     enable_llm_rerank=False),
+                     enable_llm_rerank=False, query_translation=False),
         )
     )
     if not args.no_rerank:
@@ -110,22 +121,52 @@ def main() -> None:
                          enable_llm_rerank=True, rerank_provider="laya"),
             )
         )
+    # cross-lingual mode: CJK queries translated by the OFFLINE opus-mt model
+    # (rule chain has no chat -> the translation chain falls to the offline
+    # leg; no API cost, no dead-key retries)
+    prod = Settings()
+    modes.append(
+        (
+            "hybrid + zh->en translation",
+            Settings(
+                _env_file=None,
+                hybrid_retrieval=True,
+                enable_llm_rerank=False,
+                query_translation=True,
+                llm_provider="rule",
+                llm_fallback_providers=[],
+                offline_translator_model=prod.offline_translator_model,
+                asr_provider="none",
+                tts_provider="none",
+                database_url=prod.database_url,
+                embedder_provider=prod.embedder_provider,
+                embedder_fallback_providers=prod.embedder_fallback_providers,
+            ),
+        )
+    )
 
     results = []
     for label, settings in modes:
         settings.database_url = Settings().database_url
         service = make_service(settings, settings_engine)
         outcome = evaluate(service, label)
+        xl_outcome = evaluate(service, label + " [xl]", XL_CASES)
         results.append(outcome)
         print(
             f"{outcome['label']:<28} P@3={outcome['p3']:.2f}  MRR={outcome['mrr']:.2f}  "
             f"latency={outcome['latency_avg']:.0f}ms"
         )
-    print()
-    best = results[0]
+        print(
+            f"{xl_outcome['label']:<28} P@3={xl_outcome['p3']:.2f}  MRR={xl_outcome['mrr']:.2f}"
+        )
+        xl_per_query = xl_outcome["per_query"]
+        print()
     print("per-query (baseline):")
-    for query, names, ms in best["per_query"]:
+    for query, names, ms in results[0]["per_query"]:
         print(f"  [{ms:5.0f}ms] {query} -> {', '.join(names)}")
+    print("per-query (cross-lingual, baseline config):")
+    for query, names, ms in xl_per_query:
+        print(f"  {query} -> {', '.join(names)}")
     settings_engine.dispose()
 
 

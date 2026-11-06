@@ -116,6 +116,17 @@ class Settings(BaseSettings):
     # blur get pulled back in. Zero extra dependencies.
     hybrid_retrieval: bool = True
 
+    # -- Cross-lingual query handling --
+    # Chinese queries measurably under-recall English-only projects: BGE-M3
+    # bridges partially, but any doc containing Chinese text outcompetes.
+    # Fix: translate the query once via the primary LLM (cached on disk),
+    # then search dense+BM25 in both languages and merge by best score.
+    query_translation: bool = True
+    query_translations_file: str = "./query_translations.json"
+    # Offline zh->en fallback (Helsinki-NLP opus-mt via transformers) when no
+    # chat-capable LLM is available; models via training/download_translation_model.py
+    offline_translator_model: str = "./models/opus-mt-zh-en"
+
     # -- Feedback loop (external votes actually change behavior) --
     # Downvoted projects are multiplied by (1 - penalty * down_ratio), i.e. a
     # project rejected by every voter loses at most this fraction of its

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.llm.base import AnalysisError, LLMAnalyzer
+from app.llm.base import AnalysisError, AnalysisResult, LLMAnalyzer
 
 
 class Flaky(LLMAnalyzer):
